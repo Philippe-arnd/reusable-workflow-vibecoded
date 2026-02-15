@@ -12,7 +12,7 @@ Lint/build + Vitest with coverage + optional parallel RLS tests + PR comment.
 jobs:
   validate:
     if: github.event.pull_request.draft == false
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-pr-validation.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-pr-validation.yml@main
     secrets: inherit
     with:
       node-version: '24'
@@ -37,7 +37,7 @@ Gitleaks secret detection + Semgrep SAST + bundle size analysis + PR comment.
 jobs:
   security:
     if: github.event.pull_request.draft == false
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-security-performance.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-security-performance.yml@main
     secrets: inherit
     with:
       semgrep-extra-config: '.semgrep.yml'
@@ -54,7 +54,7 @@ Docker build + health check. Supports both single Dockerfile and docker-compose.
 jobs:
   docker:
     if: github.event.pull_request.draft == false
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-docker-validation.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-docker-validation.yml@main
     secrets: inherit
     with:
       use-compose: false          # true for docker-compose projects
@@ -70,7 +70,7 @@ CVE and license checks via `actions/dependency-review-action`.
 ```yaml
 jobs:
   review:
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-dependency-review.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-dependency-review.yml@main
     secrets: inherit
     with:
       fail-on-severity: high
@@ -89,7 +89,7 @@ on:
 
 jobs:
   auto-merge:
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-auto-merge.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-auto-merge.yml@main
     secrets: inherit
     with:
       required-checks: |

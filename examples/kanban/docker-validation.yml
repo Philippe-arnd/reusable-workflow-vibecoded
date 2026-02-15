@@ -16,7 +16,7 @@ concurrency:
 jobs:
   docker:
     if: github.event.pull_request.draft == false
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-docker-validation.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-docker-validation.yml@main
     secrets: inherit
     with:
       use-compose: false

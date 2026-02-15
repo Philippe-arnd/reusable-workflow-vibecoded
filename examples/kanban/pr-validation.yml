@@ -12,7 +12,7 @@ concurrency:
 jobs:
   validate:
     if: github.event.pull_request.draft == false
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-pr-validation.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-pr-validation.yml@main
     secrets: inherit
     with:
       node-version: '24'

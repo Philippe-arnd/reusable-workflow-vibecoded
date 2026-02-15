@@ -6,7 +6,7 @@ on:
 
 jobs:
   review:
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-dependency-review.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-dependency-review.yml@main
     secrets: inherit
     with:
       fail-on-severity: high

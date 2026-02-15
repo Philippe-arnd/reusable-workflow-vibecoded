@@ -10,7 +10,7 @@ Consumer repositories reference workflows as:
 ```yaml
 jobs:
   validate:
-    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-pr-validation.yml@main
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-pr-validation.yml@main
     secrets: inherit
     with:
       node-version: '24'

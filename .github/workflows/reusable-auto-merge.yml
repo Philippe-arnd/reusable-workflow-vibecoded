@@ -7,6 +7,10 @@ on:
         description: 'Newline-separated list of check names that must all pass before merging'
         type: string
         required: true
+      conditional-checks:
+        description: 'Newline-separated list of check names that block merging only if they ran (skipped when check run is absent)'
+        type: string
+        default: ''
       merge-method:
         description: 'Merge method: squash, merge, or rebase'
         type: string
@@ -91,6 +95,11 @@ jobs:
               .map(s => s.trim())
               .filter(Boolean);
 
+            const conditionalChecks = `${{ inputs.conditional-checks }}`
+              .split('\n')
+              .map(s => s.trim())
+              .filter(Boolean);
+
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -109,10 +118,23 @@ jobs:
             }
 
             let allPassed = true;
+
             for (const name of requiredChecks) {
               const c = checkMap[name];
               if (!c || c.status !== 'completed' || c.conclusion !== 'success') {
                 console.log(`❌ Required check '${name}': ${c ? `${c.status}/${c.conclusion}` : 'not found'}`);
+                allPassed = false;
+              } else {
+                console.log(`✅ ${name}: passed`);
+              }
+            }
+
+            for (const name of conditionalChecks) {
+              const c = checkMap[name];
+              if (!c) {
+                console.log(`⏭️ Conditional check '${name}': not found (did not run — skipping)`);
+              } else if (c.status !== 'completed' || c.conclusion !== 'success') {
+                console.log(`❌ Conditional check '${name}': ${c.status}/${c.conclusion} (ran but did not pass)`);
                 allPassed = false;
               } else {
                 console.log(`✅ ${name}: passed`);

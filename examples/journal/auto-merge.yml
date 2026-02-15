@@ -24,3 +24,5 @@ jobs:
         🔍 Secret Detection
         🛡️ Security Scan
         Review Dependencies for Vulnerabilities
+      conditional-checks: |
+        🐳 Build & Validate Docker Image

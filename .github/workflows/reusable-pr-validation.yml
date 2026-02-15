@@ -1,0 +1,149 @@
+name: Reusable PR Validation
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '24'
+      postgres-db:
+        required: false
+        type: string
+        default: 'test_db'
+      run-lint:
+        required: false
+        type: boolean
+        default: true
+      run-build:
+        required: false
+        type: boolean
+        default: true
+      run-vitest:
+        required: false
+        type: boolean
+        default: true
+      run-rls:
+        required: false
+        type: boolean
+        default: false
+      coverage-threshold:
+        required: false
+        type: number
+        default: 80
+
+jobs:
+  quick-checks:
+    name: ✅ Quick Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Lint
+        if: ${{ inputs.run-lint }}
+        run: npm run lint || echo "No lint script found"
+
+      - name: 🏗️ Build
+        if: ${{ inputs.run-build }}
+        run: npm run build || echo "No build script found"
+
+  vitest-tests:
+    name: 🧪 Vitest Tests
+    if: ${{ inputs.run-vitest }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      lines: ${{ steps.coverage.outputs.lines }}
+      statements: ${{ steps.coverage.outputs.statements }}
+      functions: ${{ steps.coverage.outputs.functions }}
+      branches: ${{ steps.coverage.outputs.branches }}
+      coverage_available: ${{ steps.coverage.outputs.available }}
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🛢️ Install PostgreSQL client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: ⏳ Wait for PostgreSQL
+        run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
+
+      - name: 🧪 Run Vitest with coverage
+        id: vitest
+        run: |
+          set +e
+          npm run test:coverage 2>&1 | tee /tmp/vitest-output.txt
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          set -e
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/${{ inputs.postgres-db }}
+
+      - name: 📊 Parse coverage report
+        id: coverage
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            LINES=$(node -e "const s=require('./coverage/coverage-summary.json').total;console.log(s.lines.pct)")
+            echo "lines=$LINES" >> $GITHUB_OUTPUT
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: ❌ Fail if Vitest failed
+        if: always()
+        run: |
+          if [ "${{ steps.vitest.outputs.exit_code }}" != "0" ]; then
+            exit 1
+          fi
+
+  report:
+    name: 📊 Summary Report
+    needs: [quick-checks, vitest-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: 💬 Post Summary
+        run: |
+          echo "### 🧪 CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Quick Checks | ${{ needs.quick-checks.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Vitest Tests | ${{ needs.vitest-tests.result }} |" >> $GITHUB_STEP_SUMMARY

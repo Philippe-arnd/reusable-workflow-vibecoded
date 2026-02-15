@@ -7,10 +7,14 @@ on:
         description: 'Minimum severity to fail on (low, moderate, high, critical)'
         type: string
         default: 'high'
+      license-check:
+        description: 'Enable license compliance checking'
+        type: boolean
+        default: false
       allow-licenses:
-        description: 'Space-separated list of allowed SPDX license identifiers'
+        description: 'Comma-separated list of allowed SPDX license identifiers (used when license-check is true)'
         type: string
-        default: 'MIT MIT-0 Apache-2.0 BSD-2-Clause BSD-3-Clause ISC 0BSD'
+        default: 'MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, Unlicense, BlueOak-1.0.0'
       allow-dependencies-licenses:
         description: >
           Comma-separated list of pkg:npm/<package> exemptions for specific packages
@@ -48,7 +52,7 @@ jobs:
         with:
           fail-on-severity: ${{ inputs.fail-on-severity }}
           vulnerability-check: true
-          license-check: true
+          license-check: ${{ inputs.license-check }}
           allow-licenses: ${{ inputs.allow-licenses }}
           allow-dependencies-licenses: ${{ inputs.allow-dependencies-licenses }}
           warn-only: ${{ inputs.warn-only }}

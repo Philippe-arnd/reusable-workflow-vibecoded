@@ -23,6 +23,14 @@ on:
         description: 'PRs with this label are skipped (require manual review)'
         type: string
         default: 'major-update'
+      triggering-conclusion:
+        description: 'Conclusion of the triggering workflow_run (passed from caller since workflow_call does not forward event payload)'
+        type: string
+        default: ''
+      triggering-branch:
+        description: 'Head branch of the triggering workflow_run (passed from caller since workflow_call does not forward event payload)'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -34,15 +42,17 @@ jobs:
     name: 🤖 Auto Merge
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Only run when the triggering workflow succeeded
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Only run when the triggering workflow succeeded.
+    # inputs.triggering-conclusion is forwarded by the caller because workflow_call
+    # does not propagate the parent workflow_run event payload.
+    if: ${{ inputs.triggering-conclusion == 'success' }}
     steps:
       - name: 🔍 Find associated PR and check eligibility
         id: find-pr
         uses: actions/github-script@v8
         with:
           script: |
-            const branch = context.payload.workflow_run.head_branch;
+            const branch = '${{ inputs.triggering-branch }}';
             const baseBranch = '${{ inputs.base-branch }}';
             const blockLabel = '${{ inputs.block-label }}';
 

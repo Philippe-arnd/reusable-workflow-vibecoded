@@ -1,0 +1,303 @@
+name: Reusable Security & Performance
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version'
+        type: string
+        default: '24'
+      cache-dependency-path:
+        description: 'Path to package-lock.json for npm cache'
+        type: string
+        default: 'package-lock.json'
+
+      # Semgrep
+      semgrep-extra-config:
+        description: 'Extra Semgrep rulesets or paths, space-separated (appended to base config)'
+        type: string
+        default: ''
+
+      # Bundle size — install/build
+      run-bundle-analysis:
+        description: 'Run bundle size analysis'
+        type: boolean
+        default: true
+      install-command:
+        description: 'Command to install dependencies for the bundle analysis build'
+        type: string
+        default: 'npm ci'
+      build-command:
+        description: 'Build command for bundle analysis'
+        type: string
+        default: 'npm run build'
+      build-env:
+        description: 'Env vars for the build step, one KEY=VALUE per line'
+        type: string
+        default: ''
+      bundle-client-dir:
+        description: 'Working directory containing dist/ after build (e.g. client or .)'
+        type: string
+        default: '.'
+
+      # Bundle size — mode: absolute limits (default) OR relative diff from baseline
+      # If baseline values are provided (> 0), relative diff mode is used.
+      bundle-js-baseline-kb:
+        description: 'JS baseline in KB for relative diff mode (0 = use absolute limit)'
+        type: number
+        default: 0
+      bundle-css-baseline-kb:
+        description: 'CSS baseline in KB for relative diff mode (0 = use absolute limit)'
+        type: number
+        default: 0
+      bundle-js-limit-kb:
+        description: 'JS absolute size limit in KB (used when baseline is 0)'
+        type: number
+        default: 600
+      bundle-css-limit-kb:
+        description: 'CSS absolute size limit in KB (used when baseline is 0)'
+        type: number
+        default: 80
+      bundle-warn-threshold-pct:
+        description: 'Relative diff % above which a warning is emitted (relative mode only)'
+        type: number
+        default: 10
+
+jobs:
+  # ─── Job 1: Secret Detection ──────────────────────────────────────────────
+  secret-detection:
+    name: 🔑 Secret Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 📥 Checkout code (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  # ─── Job 2: SAST Security Scan ────────────────────────────────────────────
+  security-scan:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+      message: ${{ steps.result.outputs.message }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+
+      - name: 🛡️ Run Semgrep
+        id: semgrep
+        uses: semgrep/semgrep-action@v1
+        continue-on-error: true
+        with:
+          config: >-
+            p/security-audit
+            p/javascript
+            p/react
+            p/nodejs
+            ${{ inputs.semgrep-extra-config }}
+          generateSarif: '1'
+
+      - name: 📤 Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true
+
+      - name: 📊 Parse Semgrep results
+        if: always()
+        id: result
+        run: |
+          if [ "${{ steps.semgrep.outcome }}" = "success" ]; then
+            echo "status=✅ Pass"           >> $GITHUB_OUTPUT
+            echo "message=No issues found" >> $GITHUB_OUTPUT
+          elif [ -f semgrep.sarif ]; then
+            ERRORS=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif 2>/dev/null || echo "0")
+            WARNINGS=$(jq '[.runs[].results[] | select(.level == "warning")] | length' semgrep.sarif 2>/dev/null || echo "0")
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "status=❌ Fail"                      >> $GITHUB_OUTPUT
+              echo "message=${ERRORS} critical issue(s)" >> $GITHUB_OUTPUT
+            else
+              echo "status=⚠️ Warning"               >> $GITHUB_OUTPUT
+              echo "message=${WARNINGS} warning(s)"  >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "status=❌ Fail"       >> $GITHUB_OUTPUT
+            echo "message=Scan failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: ❌ Fail on critical findings
+        if: steps.semgrep.outcome == 'failure' && steps.result.outputs.status == '❌ Fail'
+        run: |
+          echo "Semgrep found critical security issues."
+          exit 1
+
+  # ─── Job 3: Bundle Size Analysis ──────────────────────────────────────────
+  bundle-analysis:
+    name: 📦 Bundle Size
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ inputs.run-bundle-analysis }}
+    outputs:
+      status: ${{ steps.analyze.outputs.status }}
+      message: ${{ steps.analyze.outputs.message }}
+      js_kb: ${{ steps.analyze.outputs.js_kb }}
+      css_kb: ${{ steps.analyze.outputs.css_kb }}
+      js_gzip_kb: ${{ steps.analyze.outputs.js_gzip_kb }}
+      css_gzip_kb: ${{ steps.analyze.outputs.css_gzip_kb }}
+      js_diff_kb: ${{ steps.analyze.outputs.js_diff_kb }}
+      css_diff_kb: ${{ steps.analyze.outputs.css_diff_kb }}
+      js_pct: ${{ steps.analyze.outputs.js_pct }}
+      css_pct: ${{ steps.analyze.outputs.css_pct }}
+      mode: ${{ steps.analyze.outputs.mode }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+      - name: 📦 Install dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: 🏗️ Build
+        run: |
+          if [ -n "$BUILD_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && export "$line"
+            done <<< "$BUILD_ENV"
+          fi
+          ${{ inputs.build-command }}
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+
+      - name: 📏 Analyze bundle size
+        id: analyze
+        working-directory: ${{ inputs.bundle-client-dir }}
+        run: |
+          JS_BASELINE=${{ inputs.bundle-js-baseline-kb }}
+          CSS_BASELINE=${{ inputs.bundle-css-baseline-kb }}
+          JS_LIMIT=${{ inputs.bundle-js-limit-kb }}
+          CSS_LIMIT=${{ inputs.bundle-css-limit-kb }}
+          WARN_PCT=${{ inputs.bundle-warn-threshold-pct }}
+
+          # Measure current sizes
+          JS_KB=$(find dist/assets -name '*.js' -exec du -b {} + 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum/1024}' || echo 0)
+          CSS_KB=$(find dist/assets -name '*.css' -exec du -b {} + 2>/dev/null | awk '{sum+=$1} END {printf "%.0f", sum/1024}' || echo 0)
+          JS_GZIP=$(find dist/assets -name '*.js' -exec gzip -c {} \; 2>/dev/null | wc -c | awk '{printf "%.0f", $1/1024}' || echo 0)
+          CSS_GZIP=$(find dist/assets -name '*.css' -exec gzip -c {} \; 2>/dev/null | wc -c | awk '{printf "%.0f", $1/1024}' || echo 0)
+
+          echo "js_kb=$JS_KB"           >> $GITHUB_OUTPUT
+          echo "css_kb=$CSS_KB"         >> $GITHUB_OUTPUT
+          echo "js_gzip_kb=$JS_GZIP"   >> $GITHUB_OUTPUT
+          echo "css_gzip_kb=$CSS_GZIP" >> $GITHUB_OUTPUT
+
+          if [ "$JS_BASELINE" -gt 0 ] || [ "$CSS_BASELINE" -gt 0 ]; then
+            # ── Relative diff mode ──
+            echo "mode=relative" >> $GITHUB_OUTPUT
+            JS_DIFF=$((JS_KB - JS_BASELINE))
+            CSS_DIFF=$((CSS_KB - CSS_BASELINE))
+            JS_PCT=$(awk "BEGIN {printf \"%.1f\", ($JS_BASELINE > 0 ? ($JS_KB - $JS_BASELINE) / $JS_BASELINE * 100 : 0)}")
+            CSS_PCT=$(awk "BEGIN {printf \"%.1f\", ($CSS_BASELINE > 0 ? ($CSS_KB - $CSS_BASELINE) / $CSS_BASELINE * 100 : 0)}")
+            echo "js_diff_kb=$JS_DIFF"  >> $GITHUB_OUTPUT
+            echo "css_diff_kb=$CSS_DIFF" >> $GITHUB_OUTPUT
+            echo "js_pct=$JS_PCT"       >> $GITHUB_OUTPUT
+            echo "css_pct=$CSS_PCT"     >> $GITHUB_OUTPUT
+
+            if (( $(echo "$JS_PCT > $WARN_PCT" | bc -l) )) || (( $(echo "$CSS_PCT > $WARN_PCT" | bc -l) )); then
+              echo "status=⚠️ Warning"     >> $GITHUB_OUTPUT
+              echo "message=Increased >$WARN_PCT%" >> $GITHUB_OUTPUT
+            elif [ "$JS_DIFF" -gt 0 ] || [ "$CSS_DIFF" -gt 0 ]; then
+              echo "status=📈 Increased"    >> $GITHUB_OUTPUT
+              echo "message=Minor increase" >> $GITHUB_OUTPUT
+            elif [ "$JS_DIFF" -lt 0 ] || [ "$CSS_DIFF" -lt 0 ]; then
+              echo "status=📉 Decreased"  >> $GITHUB_OUTPUT
+              echo "message=Size reduced" >> $GITHUB_OUTPUT
+            else
+              echo "status=✅ Unchanged"  >> $GITHUB_OUTPUT
+              echo "message=No changes"  >> $GITHUB_OUTPUT
+            fi
+          else
+            # ── Absolute limit mode ──
+            echo "mode=absolute"         >> $GITHUB_OUTPUT
+            echo "js_diff_kb=0"          >> $GITHUB_OUTPUT
+            echo "css_diff_kb=0"         >> $GITHUB_OUTPUT
+            JS_PCT=$(awk "BEGIN {printf \"%.0f\", $JS_KB * 100 / $JS_LIMIT}")
+            CSS_PCT=$(awk "BEGIN {printf \"%.0f\", $CSS_KB * 100 / $CSS_LIMIT}")
+            echo "js_pct=$JS_PCT"        >> $GITHUB_OUTPUT
+            echo "css_pct=$CSS_PCT"      >> $GITHUB_OUTPUT
+
+            OVER=false
+            [ "$JS_KB" -gt "$JS_LIMIT" ]  && OVER=true && echo "WARNING: JS ${JS_KB}KB exceeds limit ${JS_LIMIT}KB"
+            [ "$CSS_KB" -gt "$CSS_LIMIT" ] && OVER=true && echo "WARNING: CSS ${CSS_KB}KB exceeds limit ${CSS_LIMIT}KB"
+
+            if [ "$OVER" = "true" ]; then
+              echo "status=⚠️ Over limit"  >> $GITHUB_OUTPUT
+              echo "message=Exceeds limit" >> $GITHUB_OUTPUT
+            else
+              echo "status=✅ Within limit"        >> $GITHUB_OUTPUT
+              echo "message=${JS_PCT}% / ${CSS_PCT}% of limits" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  # ─── Job 4: PR Comment Report ─────────────────────────────────────────────
+  report:
+    name: 📋 Security Report
+    needs: [secret-detection, security-scan, bundle-analysis]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: 🔍 Find existing PR comment
+        id: find-comment
+        uses: peter-evans/find-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- ci-security-report -->'
+
+      - name: 💬 Post security report comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- ci-security-report -->
+            ## 🔐 Security & Performance Report
+
+            | Check | Status |
+            |-------|--------|
+            | 🔑 Secret Detection | ${{ needs.secret-detection.result == 'success' && '✅ Passed' || needs.secret-detection.result == 'failure' && '❌ Failed' || '⏭️ Skipped' }} |
+            | 🛡️ Security Scan | ${{ needs.security-scan.outputs.status || (needs.security-scan.result == 'failure' && '❌ Failed' || '⏭️ Skipped') }} — ${{ needs.security-scan.outputs.message || '' }} |
+            | 📦 Bundle Size | ${{ needs.bundle-analysis.outputs.status || '⏭️ Skipped' }} — ${{ needs.bundle-analysis.outputs.message || '' }} |
+
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '### 📦 Bundle Details' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '| Asset | Size | Gzipped | Δ vs baseline |' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '|:------|-----:|--------:|:--------------|' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && format('| JavaScript | {0} KB | {1} KB | {2}{3} KB ({4}{5}%) |', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_gzip_kb, needs.bundle-analysis.outputs.js_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.js_diff_kb, needs.bundle-analysis.outputs.js_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.js_pct) || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && format('| CSS | {0} KB | {1} KB | {2}{3} KB ({4}{5}%) |', needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_gzip_kb, needs.bundle-analysis.outputs.css_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.css_diff_kb, needs.bundle-analysis.outputs.css_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.css_pct) || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && format('### 📦 Bundle Details\n\n| Asset | Size | % of limit |\n|:------|-----:|-----------:|\n| JavaScript | {0} KB | {1}% |\n| CSS | {2} KB | {3}% |', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_pct, needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_pct) || '' }}
+
+      - name: ❌ Fail if blocking checks failed
+        if: needs.secret-detection.result == 'failure' || needs.security-scan.result == 'failure'
+        run: |
+          echo "One or more blocking security checks failed."
+          exit 1

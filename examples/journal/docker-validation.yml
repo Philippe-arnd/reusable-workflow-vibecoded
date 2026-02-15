@@ -1,0 +1,27 @@
+name: 🐳 Docker Validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'Dockerfile'
+      - '*/Dockerfile'
+      - 'docker-compose*.yml'
+      - '.dockerignore'
+      - '*.Dockerfile'
+
+concurrency:
+  group: docker-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    if: github.event.pull_request.draft == false
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-docker-validation.yml@main
+    secrets: inherit
+    with:
+      use-compose: true
+      compose-health-service: server
+      compose-health-port: 3000
+      health-endpoint: /health

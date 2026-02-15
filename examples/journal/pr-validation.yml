@@ -1,0 +1,58 @@
+name: ✅ PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event.pull_request.draft == false
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-pr-validation.yml@main
+    secrets: inherit
+    with:
+      node-version: '24.13.1'
+      # Monorepo: install root + client + server packages
+      install-command: >-
+        npm ci --prefer-offline &&
+        npm ci --prefix client --prefer-offline &&
+        npm ci --prefix server --prefer-offline
+      # Parallel lint + build
+      lint-command: npm run lint:client & npm run test:infra & wait
+      build-command: npm run build --prefix client & npm run build --prefix server & wait
+      cache-dependency-path: package-lock.json
+
+      # No build-env needed (no VITE_ENCRYPTION_KEY in Journal)
+
+      # Database
+      postgres-db: journal_test
+      postgres-admin-password: test_password
+
+      # Migrations & RLS setup (run from server working dir via npm scripts)
+      db-migration-command: npm run db:push --prefix server
+      db-rls-setup-command: npm run db:rls --prefix server
+
+      # Vitest: run RLS tests inline then vitest coverage (Journal pattern)
+      # Note: rls-test-command is intentionally empty — RLS runs inside test-command
+      test-command: >-
+        npm run test:rls --prefix server &&
+        npx --prefix server vitest run
+        --coverage
+        --coverage.reporter=json-summary
+        --coverage.reporter=text
+        --config server/vitest.config.ts
+      coverage-dir: server/coverage
+      test-env: |
+        BETTER_AUTH_SECRET=test-secret-key-for-ci-minimum-32-characters
+        BETTER_AUTH_URL=http://localhost:3000
+        RESEND_API_KEY=re_test_key_for_ci
+        NODE_ENV=test
+
+      # No separate RLS job (already inline in test-command above)
+      rls-test-command: ''
+
+      coverage-threshold: 80

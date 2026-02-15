@@ -4,39 +4,105 @@ on:
   workflow_call:
     inputs:
       node-version:
-        required: false
+        description: 'Node.js version'
         type: string
         default: '24'
+
+      # Installation
+      install-command:
+        description: 'Command to install dependencies (override for monorepo)'
+        type: string
+        default: 'npm ci'
+      cache-dependency-path:
+        description: 'Path to package-lock.json for npm cache'
+        type: string
+        default: 'package-lock.json'
+
+      # Lint & Build
+      run-lint:
+        description: 'Run the lint step'
+        type: boolean
+        default: true
+      lint-command:
+        description: 'Lint command'
+        type: string
+        default: 'npm run lint'
+      run-build:
+        description: 'Run the build step'
+        type: boolean
+        default: true
+      build-command:
+        description: 'Build command'
+        type: string
+        default: 'npm run build'
+      build-env:
+        description: 'Env vars for the build step, one KEY=VALUE per line'
+        type: string
+        default: ''
+
+      # Tests
+      run-vitest:
+        description: 'Run Vitest tests'
+        type: boolean
+        default: true
+      test-command:
+        description: 'Test command (should generate coverage/coverage-summary.json)'
+        type: string
+        default: 'npm run test:coverage'
+      test-env:
+        description: 'Env vars for the test step, one KEY=VALUE per line'
+        type: string
+        default: ''
+      coverage-dir:
+        description: 'Directory containing coverage-summary.json'
+        type: string
+        default: 'coverage'
+      coverage-threshold:
+        description: 'Minimum line coverage % to pass (0 = no threshold)'
+        type: number
+        default: 0
+
+      # PostgreSQL
       postgres-db:
-        required: false
+        description: 'Name of the test database'
         type: string
         default: 'test_db'
-      run-lint:
-        required: false
-        type: boolean
-        default: true
-      run-build:
-        required: false
-        type: boolean
-        default: true
-      run-vitest:
-        required: false
-        type: boolean
-        default: true
-      run-rls:
-        required: false
-        type: boolean
-        default: false
-      coverage-threshold:
-        required: false
-        type: number
-        default: 80
+      postgres-admin-password:
+        description: 'Postgres superuser password (matches POSTGRES_PASSWORD in service)'
+        type: string
+        default: 'postgres'
+      app-user:
+        description: 'Non-superuser created for RLS-enforced connections'
+        type: string
+        default: 'app_user'
+      app-password:
+        description: 'Password for the non-superuser'
+        type: string
+        default: 'app_password'
+
+      # Database setup commands (optional — skipped when empty)
+      db-migration-command:
+        description: 'Command to run database migrations (e.g. npx drizzle-kit push)'
+        type: string
+        default: ''
+      db-rls-setup-command:
+        description: 'Command to apply RLS policies (e.g. node server/db/apply-rls.js)'
+        type: string
+        default: ''
+
+      # RLS tests (optional — skipped when empty)
+      rls-test-command:
+        description: 'Command for RLS tests. When set, runs as a separate parallel job.'
+        type: string
+        default: ''
 
 jobs:
+  # ─── Job 1: Lint & Build ──────────────────────────────────────────────────
   quick-checks:
     name: ✅ Quick Checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    if: ${{ inputs.run-lint || inputs.run-build }}
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
@@ -46,24 +112,35 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'npm'
+          cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
       - name: 📦 Install dependencies
-        run: npm ci
+        run: ${{ inputs.install-command }}
 
       - name: 🔍 Lint
         if: ${{ inputs.run-lint }}
-        run: npm run lint || echo "No lint script found"
+        run: ${{ inputs.lint-command }}
 
       - name: 🏗️ Build
         if: ${{ inputs.run-build }}
-        run: npm run build || echo "No build script found"
+        run: |
+          if [ -n "$BUILD_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && export "$line"
+            done <<< "$BUILD_ENV"
+          fi
+          ${{ inputs.build-command }}
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
 
+  # ─── Job 2: Vitest + Coverage ─────────────────────────────────────────────
   vitest-tests:
     name: 🧪 Vitest Tests
-    if: ${{ inputs.run-vitest }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: ${{ inputs.run-vitest }}
     outputs:
+      exit_code: ${{ steps.vitest.outputs.exit_code }}
       lines: ${{ steps.coverage.outputs.lines }}
       statements: ${{ steps.coverage.outputs.statements }}
       functions: ${{ steps.coverage.outputs.functions }}
@@ -74,7 +151,7 @@ jobs:
         image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ inputs.postgres-admin-password }}
           POSTGRES_DB: ${{ inputs.postgres-db }}
         ports:
           - 5432:5432
@@ -93,9 +170,10 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'npm'
+          cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
       - name: 📦 Install dependencies
-        run: npm ci
+        run: ${{ inputs.install-command }}
 
       - name: 🛢️ Install PostgreSQL client
         run: sudo apt-get install -y postgresql-client
@@ -103,47 +181,257 @@ jobs:
       - name: ⏳ Wait for PostgreSQL
         run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
 
+      - name: 👤 Create app_user
+        run: |
+          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
+            -c "CREATE USER ${{ inputs.app-user }} WITH PASSWORD '${{ inputs.app-password }}';"
+          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
+            -c "GRANT CONNECT ON DATABASE ${{ inputs.postgres-db }} TO ${{ inputs.app-user }};"
+        env:
+          PGPASSWORD: ${{ inputs.postgres-admin-password }}
+
+      - name: 🔄 Run database migrations
+        if: ${{ inputs.db-migration-command != '' }}
+        run: ${{ inputs.db-migration-command }}
+        env:
+          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+
+      - name: 🔑 Grant app_user permissions
+        run: |
+          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} -c \
+            "GRANT USAGE ON SCHEMA public TO ${{ inputs.app-user }};
+             GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${{ inputs.app-user }};
+             GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${{ inputs.app-user }};
+             ALTER DEFAULT PRIVILEGES IN SCHEMA public
+               GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${{ inputs.app-user }};
+             ALTER DEFAULT PRIVILEGES IN SCHEMA public
+               GRANT USAGE,SELECT ON SEQUENCES TO ${{ inputs.app-user }};"
+        env:
+          PGPASSWORD: ${{ inputs.postgres-admin-password }}
+
+      - name: 🛡️ Apply RLS policies
+        if: ${{ inputs.db-rls-setup-command != '' }}
+        run: ${{ inputs.db-rls-setup-command }}
+        env:
+          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+
       - name: 🧪 Run Vitest with coverage
         id: vitest
         run: |
+          if [ -n "$TEST_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && export "$line"
+            done <<< "$TEST_ENV"
+          fi
           set +e
-          npm run test:coverage 2>&1 | tee /tmp/vitest-output.txt
+          ${{ inputs.test-command }} 2>&1 | tee /tmp/vitest-output.txt
           echo "exit_code=$?" >> $GITHUB_OUTPUT
           set -e
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_URL: postgresql://${{ inputs.app-user }}:${{ inputs.app-password }}@localhost:5432/${{ inputs.postgres-db }}
+          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          TEST_ENV: ${{ inputs.test-env }}
 
       - name: 📊 Parse coverage report
         id: coverage
         if: always()
         run: |
-          if [ -f coverage/coverage-summary.json ]; then
-            LINES=$(node -e "const s=require('./coverage/coverage-summary.json').total;console.log(s.lines.pct)")
-            echo "lines=$LINES" >> $GITHUB_OUTPUT
-            echo "available=true" >> $GITHUB_OUTPUT
+          SUMMARY="${{ inputs.coverage-dir }}/coverage-summary.json"
+          if [ -f "$SUMMARY" ]; then
+            LINES=$(node -e "const s=require('./$SUMMARY').total;console.log(s.lines.pct)")
+            STMTS=$(node -e "const s=require('./$SUMMARY').total;console.log(s.statements.pct)")
+            FUNCS=$(node -e "const s=require('./$SUMMARY').total;console.log(s.functions.pct)")
+            BRNCH=$(node -e "const s=require('./$SUMMARY').total;console.log(s.branches.pct)")
+            echo "lines=$LINES"       >> $GITHUB_OUTPUT
+            echo "statements=$STMTS" >> $GITHUB_OUTPUT
+            echo "functions=$FUNCS"  >> $GITHUB_OUTPUT
+            echo "branches=$BRNCH"   >> $GITHUB_OUTPUT
+            echo "available=true"    >> $GITHUB_OUTPUT
           else
             echo "available=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: 📤 Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-report
+          path: ${{ inputs.coverage-dir }}/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: ❌ Fail if Vitest failed
         if: always()
         run: |
           if [ "${{ steps.vitest.outputs.exit_code }}" != "0" ]; then
+            echo "Vitest tests failed (exit code: ${{ steps.vitest.outputs.exit_code }})"
+            cat /tmp/vitest-output.txt || true
             exit 1
           fi
 
+      - name: ❌ Fail if coverage below threshold
+        if: always() && inputs.coverage-threshold > 0 && steps.coverage.outputs.available == 'true'
+        run: |
+          LINES="${{ steps.coverage.outputs.lines }}"
+          THRESHOLD="${{ inputs.coverage-threshold }}"
+          BELOW=$(node -e "console.log($LINES < $THRESHOLD ? 'true' : 'false')")
+          if [ "$BELOW" = "true" ]; then
+            echo "Line coverage ${LINES}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+
+  # ─── Job 3: RLS Tests (parallel, optional) ────────────────────────────────
+  rls-tests:
+    name: 🔒 RLS Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ inputs.rls-test-command != '' }}
+    outputs:
+      exit_code: ${{ steps.rls.outputs.exit_code }}
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ inputs.postgres-admin-password }}
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+      - name: 📦 Install dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: 🛢️ Install PostgreSQL client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: ⏳ Wait for PostgreSQL
+        run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
+
+      - name: 👤 Create app_user
+        run: |
+          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
+            -c "CREATE USER ${{ inputs.app-user }} WITH PASSWORD '${{ inputs.app-password }}';"
+          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
+            -c "GRANT CONNECT ON DATABASE ${{ inputs.postgres-db }} TO ${{ inputs.app-user }};"
+        env:
+          PGPASSWORD: ${{ inputs.postgres-admin-password }}
+
+      - name: 🔄 Run database migrations
+        if: ${{ inputs.db-migration-command != '' }}
+        run: ${{ inputs.db-migration-command }}
+        env:
+          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+
+      - name: 🔑 Grant app_user permissions
+        run: |
+          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} -c \
+            "GRANT USAGE ON SCHEMA public TO ${{ inputs.app-user }};
+             GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${{ inputs.app-user }};
+             GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${{ inputs.app-user }};
+             ALTER DEFAULT PRIVILEGES IN SCHEMA public
+               GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${{ inputs.app-user }};
+             ALTER DEFAULT PRIVILEGES IN SCHEMA public
+               GRANT USAGE,SELECT ON SEQUENCES TO ${{ inputs.app-user }};"
+        env:
+          PGPASSWORD: ${{ inputs.postgres-admin-password }}
+
+      - name: 🛡️ Apply RLS policies
+        if: ${{ inputs.db-rls-setup-command != '' }}
+        run: ${{ inputs.db-rls-setup-command }}
+        env:
+          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+
+      - name: 🔒 Run RLS tests
+        id: rls
+        run: |
+          if [ -n "$TEST_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && export "$line"
+            done <<< "$TEST_ENV"
+          fi
+          set +e
+          ${{ inputs.rls-test-command }} 2>&1 | tee /tmp/rls-output.txt
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          set -e
+        env:
+          DATABASE_URL: postgresql://${{ inputs.app-user }}:${{ inputs.app-password }}@localhost:5432/${{ inputs.postgres-db }}
+          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+          TEST_ENV: ${{ inputs.test-env }}
+
+      - name: ❌ Fail if RLS tests failed
+        if: always()
+        run: |
+          if [ "${{ steps.rls.outputs.exit_code }}" != "0" ]; then
+            echo "RLS tests failed (exit code: ${{ steps.rls.outputs.exit_code }})"
+            cat /tmp/rls-output.txt || true
+            exit 1
+          fi
+
+  # ─── Job 4: PR Comment Report ─────────────────────────────────────────────
   report:
-    name: 📊 Summary Report
-    needs: [quick-checks, vitest-tests]
+    name: 📊 Test Report
+    needs: [quick-checks, vitest-tests, rls-tests]
     if: always()
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
-      - name: 💬 Post Summary
-        run: |
-          echo "### 🧪 CI Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Quick Checks | ${{ needs.quick-checks.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Vitest Tests | ${{ needs.vitest-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+      - name: 🔍 Find existing PR comment
+        id: find-comment
+        uses: peter-evans/find-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- ci-test-results -->'
+
+      - name: 💬 Post PR comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- ci-test-results -->
+            ## 🧪 CI Test Results
+
+            | Suite | Status |
+            |-------|--------|
+            | ✅ Lint & Build | ${{ needs.quick-checks.result == 'success' && '✅ Passed' || needs.quick-checks.result == 'failure' && '❌ Failed' || needs.quick-checks.result == 'skipped' && '⏭️ Skipped' || '⏳ Running' }} |
+            | 🧪 Vitest Tests | ${{ needs.vitest-tests.result == 'success' && '✅ Passed' || needs.vitest-tests.result == 'failure' && '❌ Failed' || needs.vitest-tests.result == 'skipped' && '⏭️ Skipped' || '⏳ Running' }} |
+            | 🔒 RLS Tests | ${{ needs.rls-tests.result == 'success' && '✅ Passed' || needs.rls-tests.result == 'failure' && '❌ Failed' || needs.rls-tests.result == 'skipped' && '⏭️ Skipped' || '⏳ Running' }} |
+
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '### 📊 Coverage' || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '| Metric | Coverage | Status |' || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '|--------|----------|--------|' || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Lines | {0}% | {1} |', needs.vitest-tests.outputs.lines, needs.vitest-tests.outputs.lines >= 80 && '✅' || '⚠️') || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Statements | {0}% | {1} |', needs.vitest-tests.outputs.statements, needs.vitest-tests.outputs.statements >= 80 && '✅' || '⚠️') || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Functions | {0}% | {1} |', needs.vitest-tests.outputs.functions, needs.vitest-tests.outputs.functions >= 80 && '✅' || '⚠️') || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Branches | {0}% | {1} |', needs.vitest-tests.outputs.branches, needs.vitest-tests.outputs.branches >= 80 && '✅' || '⚠️') || '' }}
+
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('📥 [Download coverage report]({0}/{1}/actions/runs/{2})', github.server_url, github.repository, github.run_id) || '' }}

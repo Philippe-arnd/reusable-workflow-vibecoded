@@ -1,0 +1,57 @@
+name: Reusable Dependency Review
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        description: 'Minimum severity to fail on (low, moderate, high, critical)'
+        type: string
+        default: 'high'
+      allow-licenses:
+        description: 'Space-separated list of allowed SPDX license identifiers'
+        type: string
+        default: 'MIT MIT-0 Apache-2.0 BSD-2-Clause BSD-3-Clause ISC 0BSD'
+      allow-dependencies-licenses:
+        description: >
+          Comma-separated list of pkg:npm/<package> exemptions for specific packages
+          with non-standard licenses (e.g. MPL-2.0 transitive build deps like lightningcss).
+        type: string
+        default: ''
+      warn-only:
+        description: 'Warn instead of fail on vulnerabilities (useful for draft PRs)'
+        type: boolean
+        default: false
+      show-openssf-scorecard:
+        description: 'Show OpenSSF Scorecard ratings in the PR comment'
+        type: boolean
+        default: true
+      openssf-warn-level:
+        description: 'Warn on OpenSSF scorecard level at or below this value'
+        type: number
+        default: 3
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: 🔎 Review Dependencies for Vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+
+      - name: 🔎 Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          vulnerability-check: true
+          license-check: true
+          allow-licenses: ${{ inputs.allow-licenses }}
+          allow-dependencies-licenses: ${{ inputs.allow-dependencies-licenses }}
+          warn-only: ${{ inputs.warn-only }}
+          show-openssf-scorecard: ${{ inputs.show-openssf-scorecard }}
+          warn-on-openssf-scorecard-level: ${{ inputs.openssf-warn-level }}
+          comment-summary-in-pr: always

@@ -1,0 +1,27 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  review:
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-dependency-review.yml@main
+    secrets: inherit
+    with:
+      fail-on-severity: high
+      # LightningCSS is a transitive build-only dep of @tailwindcss/vite (MPL-2.0).
+      # Its copyleft applies only to modifications of LightningCSS itself.
+      allow-dependencies-licenses: >-
+        pkg:npm/lightningcss,
+        pkg:npm/lightningcss-android-arm64,
+        pkg:npm/lightningcss-darwin-arm64,
+        pkg:npm/lightningcss-darwin-x64,
+        pkg:npm/lightningcss-freebsd-x64,
+        pkg:npm/lightningcss-linux-arm-gnueabihf,
+        pkg:npm/lightningcss-linux-arm64-gnu,
+        pkg:npm/lightningcss-linux-arm64-musl,
+        pkg:npm/lightningcss-linux-x64-gnu,
+        pkg:npm/lightningcss-linux-x64-musl,
+        pkg:npm/lightningcss-win32-arm64-msvc,
+        pkg:npm/lightningcss-win32-x64-msvc

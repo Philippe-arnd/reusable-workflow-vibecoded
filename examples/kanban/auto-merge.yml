@@ -1,0 +1,26 @@
+name: Auto Merge
+
+on:
+  workflow_run:
+    workflows:
+      - 'PR Validation'
+      - 'Security & Performance'
+      - 'Dependency Review'
+      - 'Docker Validation'
+    types: [completed]
+
+jobs:
+  auto-merge:
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-auto-merge.yml@main
+    secrets: inherit
+    with:
+      base-branch: main
+      merge-method: squash
+      block-label: major-update
+      required-checks: |
+        ✅ Quick Checks
+        🧪 Vitest Tests
+        🔒 RLS Tests
+        🔑 Secret Detection
+        🛡️ Security Scan
+        🔎 Review Dependencies for Vulnerabilities

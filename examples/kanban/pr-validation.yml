@@ -1,0 +1,44 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event.pull_request.draft == false
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-pr-validation.yml@main
+    secrets: inherit
+    with:
+      node-version: '24'
+      cache-dependency-path: package-lock.json
+
+      # Build
+      build-env: 'VITE_ENCRYPTION_KEY=ci-dummy-key'
+
+      # Database
+      postgres-db: kanban_test
+      postgres-admin-password: postgres
+
+      # Migrations & RLS setup
+      db-migration-command: >-
+        npx drizzle-kit push
+        --config=server/drizzle.config.js
+        --force
+      db-rls-setup-command: node server/db/apply-rls.js
+
+      # Vitest — secrets.BETTER_AUTH_SECRET / BETTER_AUTH_URL available via secrets: inherit
+      # Pass CI-safe dummy values as test-env inputs
+      test-env: |
+        BETTER_AUTH_SECRET=ci-secret-for-better-auth-minimum-32-chars
+        BETTER_AUTH_URL=http://localhost:3000
+
+      # RLS tests run as a separate parallel job
+      rls-test-command: node --test server/tests/test-rls.js
+
+      coverage-threshold: 80

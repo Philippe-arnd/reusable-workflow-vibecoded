@@ -1,0 +1,160 @@
+name: Reusable Auto Merge
+
+on:
+  workflow_call:
+    inputs:
+      required-checks:
+        description: 'Newline-separated list of check names that must all pass before merging'
+        type: string
+        required: true
+      merge-method:
+        description: 'Merge method: squash, merge, or rebase'
+        type: string
+        default: 'squash'
+      base-branch:
+        description: 'Target branch — only PRs targeting this branch are auto-merged'
+        type: string
+        default: 'main'
+      block-label:
+        description: 'PRs with this label are skipped (require manual review)'
+        type: string
+        default: 'major-update'
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  auto-merge:
+    name: 🤖 Auto Merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only run when the triggering workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: 🔍 Find associated PR and check eligibility
+        id: find-pr
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const branch = context.payload.workflow_run.head_branch;
+            const baseBranch = '${{ inputs.base-branch }}';
+            const blockLabel = '${{ inputs.block-label }}';
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${branch}`,
+            });
+
+            const pr = prs.find(p => p.base.ref === baseBranch);
+            if (!pr) {
+              console.log(`No open PR found for branch ${branch} targeting ${baseBranch}`);
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            console.log(`Found PR #${pr.number}: ${pr.title}`);
+
+            if (pr.draft) {
+              console.log('PR is draft — skipping');
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            if (pr.mergeable === 'CONFLICTING') {
+              console.log('PR has conflicts — skipping');
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            const hasBlockLabel = (pr.labels || []).some(l => l.name === blockLabel);
+            if (hasBlockLabel) {
+              console.log(`PR has '${blockLabel}' label — requires manual review`);
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            core.setOutput('pr_number', String(pr.number));
+
+      - name: ✅ Verify all required checks passed
+        id: check-status
+        if: steps.find-pr.outputs.pr_number != ''
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.find-pr.outputs.pr_number }}');
+            const requiredChecks = `${{ inputs.required-checks }}`
+              .split('\n')
+              .map(s => s.trim())
+              .filter(Boolean);
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.head.sha,
+            });
+
+            const checkMap = {};
+            for (const run of checks.check_runs) {
+              checkMap[run.name] = { status: run.status, conclusion: run.conclusion };
+            }
+
+            let allPassed = true;
+            for (const name of requiredChecks) {
+              const c = checkMap[name];
+              if (!c || c.status !== 'completed' || c.conclusion !== 'success') {
+                console.log(`❌ Required check '${name}': ${c ? `${c.status}/${c.conclusion}` : 'not found'}`);
+                allPassed = false;
+              } else {
+                console.log(`✅ ${name}: passed`);
+              }
+            }
+
+            core.setOutput('ready', allPassed ? 'true' : 'false');
+            core.setOutput('pr_number', String(prNumber));
+
+      - name: 🔀 Merge PR
+        id: merge
+        if: steps.check-status.outputs.ready == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.check-status.outputs.pr_number }}');
+            const method = '${{ inputs.merge-method }}';
+
+            try {
+              const result = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: method,
+              });
+              console.log(`✅ PR #${prNumber} merged (${method}). SHA: ${result.data.sha}`);
+
+              await github.rest.issues.createComment({
+                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `🤖 All required CI checks passed. This PR has been automatically merged to \`${{ inputs.base-branch }}\` (${method}).`,
+              });
+            } catch (error) {
+              console.error(`Failed to merge: ${error.message}`);
+
+              await github.rest.issues.createComment({
+                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `⚠️ **Auto-merge attempted but failed**\n\nReason: ${error.message}\n\nPlease merge manually or check for conflicts.`,
+              });
+
+              throw error;
+            }

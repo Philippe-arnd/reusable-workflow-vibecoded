@@ -1,0 +1,26 @@
+name: Security & Performance
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: security-performance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    if: github.event.pull_request.draft == false
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-security-performance.yml@main
+    secrets: inherit
+    with:
+      node-version: '24'
+      cache-dependency-path: package-lock.json
+      semgrep-extra-config: '.semgrep.yml'
+
+      # Bundle: absolute limit mode (no baseline provided)
+      bundle-client-dir: '.'
+      build-env: 'VITE_ENCRYPTION_KEY=ci-dummy-key'
+      bundle-js-limit-kb: 600
+      bundle-css-limit-kb: 80

@@ -1,0 +1,14 @@
+name: 🔒 Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  review:
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-dependency-review.yml@main
+    secrets: inherit
+    with:
+      fail-on-severity: high
+      warn-only: false
+      show-openssf-scorecard: true

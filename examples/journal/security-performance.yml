@@ -1,0 +1,28 @@
+name: 🔒🚀 Security & Performance
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    if: github.event.pull_request.draft == false
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-security-performance.yml@main
+    secrets: inherit
+    with:
+      node-version: '24.13.1'
+      cache-dependency-path: client/package-lock.json
+      semgrep-extra-config: 'p/typescript .semgrep.yml'
+
+      # Bundle: relative diff mode vs known baselines
+      bundle-client-dir: client
+      install-command: npm ci --prefer-offline --no-audit
+      build-command: npm run build
+      bundle-js-baseline-kb: 543
+      bundle-css-baseline-kb: 43
+      bundle-warn-threshold-pct: 10

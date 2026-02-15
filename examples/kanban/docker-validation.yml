@@ -1,0 +1,32 @@
+name: Docker Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose*.yml'
+      - '.dockerignore'
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: docker-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    if: github.event.pull_request.draft == false
+    uses: Philippe-arnd/vibecoding-actions/.github/workflows/reusable-docker-validation.yml@main
+    secrets: inherit
+    with:
+      use-compose: false
+      image-tag: kanban-app:ci-test
+      build-args: '--build-arg VITE_ENCRYPTION_KEY=ci-dummy-key'
+      app-port: 3000
+      health-endpoint: /api/health
+      postgres-db: kanban_test
+      postgres-admin-password: postgres
+      app-env: |
+        BETTER_AUTH_SECRET=ci-secret-for-better-auth-minimum-32-chars
+        BETTER_AUTH_URL=http://localhost:3000
+        NODE_ENV=production

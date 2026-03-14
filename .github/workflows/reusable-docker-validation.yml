@@ -42,11 +42,12 @@ on:
       postgres-image:
         description: 'Postgres Docker image (single mode only)'
         type: string
-        default: 'postgres:18-alpine'
+        default: 'postgres:17-alpine'
       postgres-db:
         description: 'Test database name (single mode only)'
         type: string
         default: 'test_db'
+      # Ephemeral CI credentials — created fresh per runner, never used in production.
       postgres-admin-password:
         description: 'Postgres superuser password (single mode only)'
         type: string
@@ -55,6 +56,7 @@ on:
         description: 'Non-superuser to create for RLS (single mode only)'
         type: string
         default: 'app_user'
+      # Ephemeral CI credentials — created fresh per runner, never used in production.
       app-password:
         description: 'Password for app_user (single mode only)'
         type: string
@@ -80,11 +82,32 @@ on:
         type: number
         default: 3000
 
+      # Trivy vulnerability scan
+      run-trivy-scan:
+        description: 'Scan the built image for OS and dependency vulnerabilities'
+        type: boolean
+        default: true
+      trivy-severity:
+        description: 'Severity levels to report, comma-separated (UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)'
+        type: string
+        default: 'CRITICAL,HIGH'
+      trivy-fail-on-finding:
+        description: 'Fail the job when Trivy finds vulnerabilities at the configured severity'
+        type: boolean
+        default: false
+      trivy-compose-image:
+        description: 'Image name to scan in compose mode (e.g. myapp-server:latest). Empty = skip Trivy in compose mode.'
+        type: string
+        default: ''
+
 jobs:
   docker-build-validate:
     name: 🐳 Build & Validate Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
@@ -106,6 +129,23 @@ jobs:
             --tag ${{ inputs.image-tag }} \
             --file ${{ inputs.dockerfile-path }} \
             .
+
+      - name: 🔍 Scan image for vulnerabilities (single mode)
+        if: ${{ !inputs.use-compose && inputs.run-trivy-scan }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.image-tag }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ inputs.trivy-severity }}
+          exit-code: ${{ inputs.trivy-fail-on-finding && '1' || '0' }}
+
+      - name: 📤 Upload Trivy results to Security tab (single mode)
+        if: ${{ !inputs.use-compose && inputs.run-trivy-scan && always() }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
 
       - name: 🌐 Create Docker network (single mode)
         if: ${{ !inputs.use-compose }}
@@ -194,6 +234,23 @@ jobs:
           else
             docker compose build
           fi
+
+      - name: 🔍 Scan image for vulnerabilities (compose mode)
+        if: ${{ inputs.use-compose && inputs.run-trivy-scan && inputs.trivy-compose-image != '' }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.trivy-compose-image }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ inputs.trivy-severity }}
+          exit-code: ${{ inputs.trivy-fail-on-finding && '1' || '0' }}
+
+      - name: 📤 Upload Trivy results to Security tab (compose mode)
+        if: ${{ inputs.use-compose && inputs.run-trivy-scan && inputs.trivy-compose-image != '' && always() }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
 
       - name: 🚀 Start services (compose mode)
         if: ${{ inputs.use-compose }}

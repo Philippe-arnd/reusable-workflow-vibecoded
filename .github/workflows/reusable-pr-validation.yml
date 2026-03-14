@@ -67,6 +67,8 @@ on:
         description: 'Name of the test database'
         type: string
         default: 'test_db'
+      # Ephemeral CI credentials — created fresh per runner, never used in production.
+      # Safe to pass as inputs; consider repository secrets for stricter environments.
       postgres-admin-password:
         description: 'Postgres superuser password (matches POSTGRES_PASSWORD in service)'
         type: string
@@ -103,6 +105,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: ${{ inputs.run-lint || inputs.run-build }}
+    permissions:
+      contents: read
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
@@ -139,6 +143,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: ${{ inputs.run-vitest }}
+    permissions:
+      contents: read
     outputs:
       exit_code: ${{ steps.vitest.outputs.exit_code }}
       lines: ${{ steps.coverage.outputs.lines }}
@@ -148,7 +154,7 @@ jobs:
       coverage_available: ${{ steps.coverage.outputs.available }}
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ${{ inputs.postgres-admin-password }}
@@ -175,49 +181,15 @@ jobs:
       - name: 📦 Install dependencies
         run: ${{ inputs.install-command }}
 
-      - name: 🛢️ Install PostgreSQL client
-        run: sudo apt-get install -y postgresql-client
-
-      - name: ⏳ Wait for PostgreSQL
-        run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
-
-      - name: 👤 Create app_user
-        run: |
-          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
-            -c "CREATE USER ${{ inputs.app-user }} WITH PASSWORD '${{ inputs.app-password }}';"
-          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
-            -c "GRANT CONNECT ON DATABASE ${{ inputs.postgres-db }} TO ${{ inputs.app-user }};"
-        env:
-          PGPASSWORD: ${{ inputs.postgres-admin-password }}
-
-      - name: 🔄 Run database migrations
-        if: ${{ inputs.db-migration-command != '' }}
-        run: ${{ inputs.db-migration-command }}
-        env:
-          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-
-      - name: 🔑 Grant app_user permissions
-        run: |
-          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} -c \
-            "GRANT USAGE ON SCHEMA public TO ${{ inputs.app-user }};
-             GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${{ inputs.app-user }};
-             GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${{ inputs.app-user }};
-             ALTER DEFAULT PRIVILEGES IN SCHEMA public
-               GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${{ inputs.app-user }};
-             ALTER DEFAULT PRIVILEGES IN SCHEMA public
-               GRANT USAGE,SELECT ON SEQUENCES TO ${{ inputs.app-user }};"
-        env:
-          PGPASSWORD: ${{ inputs.postgres-admin-password }}
-
-      - name: 🛡️ Apply RLS policies
-        if: ${{ inputs.db-rls-setup-command != '' }}
-        run: ${{ inputs.db-rls-setup-command }}
-        env:
-          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+      - name: 🗄️ Setup test database
+        uses: ./.github/actions/setup-db
+        with:
+          postgres-db: ${{ inputs.postgres-db }}
+          postgres-admin-password: ${{ inputs.postgres-admin-password }}
+          app-user: ${{ inputs.app-user }}
+          app-password: ${{ inputs.app-password }}
+          db-migration-command: ${{ inputs.db-migration-command }}
+          db-rls-setup-command: ${{ inputs.db-rls-setup-command }}
 
       - name: 🧪 Run Vitest with coverage
         id: vitest
@@ -229,7 +201,7 @@ jobs:
           fi
           set +e
           ${{ inputs.test-command }} 2>&1 | tee /tmp/vitest-output.txt
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
           set -e
         env:
           DATABASE_URL: postgresql://${{ inputs.app-user }}:${{ inputs.app-password }}@localhost:5432/${{ inputs.postgres-db }}
@@ -291,11 +263,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: ${{ inputs.rls-test-command != '' }}
+    permissions:
+      contents: read
     outputs:
       exit_code: ${{ steps.rls.outputs.exit_code }}
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ${{ inputs.postgres-admin-password }}
@@ -322,49 +296,15 @@ jobs:
       - name: 📦 Install dependencies
         run: ${{ inputs.install-command }}
 
-      - name: 🛢️ Install PostgreSQL client
-        run: sudo apt-get install -y postgresql-client
-
-      - name: ⏳ Wait for PostgreSQL
-        run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
-
-      - name: 👤 Create app_user
-        run: |
-          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
-            -c "CREATE USER ${{ inputs.app-user }} WITH PASSWORD '${{ inputs.app-password }}';"
-          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
-            -c "GRANT CONNECT ON DATABASE ${{ inputs.postgres-db }} TO ${{ inputs.app-user }};"
-        env:
-          PGPASSWORD: ${{ inputs.postgres-admin-password }}
-
-      - name: 🔄 Run database migrations
-        if: ${{ inputs.db-migration-command != '' }}
-        run: ${{ inputs.db-migration-command }}
-        env:
-          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-
-      - name: 🔑 Grant app_user permissions
-        run: |
-          psql -h localhost -U postgres -d ${{ inputs.postgres-db }} -c \
-            "GRANT USAGE ON SCHEMA public TO ${{ inputs.app-user }};
-             GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${{ inputs.app-user }};
-             GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${{ inputs.app-user }};
-             ALTER DEFAULT PRIVILEGES IN SCHEMA public
-               GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${{ inputs.app-user }};
-             ALTER DEFAULT PRIVILEGES IN SCHEMA public
-               GRANT USAGE,SELECT ON SEQUENCES TO ${{ inputs.app-user }};"
-        env:
-          PGPASSWORD: ${{ inputs.postgres-admin-password }}
-
-      - name: 🛡️ Apply RLS policies
-        if: ${{ inputs.db-rls-setup-command != '' }}
-        run: ${{ inputs.db-rls-setup-command }}
-        env:
-          DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
-          DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+      - name: 🗄️ Setup test database
+        uses: ./.github/actions/setup-db
+        with:
+          postgres-db: ${{ inputs.postgres-db }}
+          postgres-admin-password: ${{ inputs.postgres-admin-password }}
+          app-user: ${{ inputs.app-user }}
+          app-password: ${{ inputs.app-password }}
+          db-migration-command: ${{ inputs.db-migration-command }}
+          db-rls-setup-command: ${{ inputs.db-rls-setup-command }}
 
       - name: 🔒 Run RLS tests
         id: rls
@@ -376,7 +316,7 @@ jobs:
           fi
           set +e
           ${{ inputs.rls-test-command }} 2>&1 | tee /tmp/rls-output.txt
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
           set -e
         env:
           DATABASE_URL: postgresql://${{ inputs.app-user }}:${{ inputs.app-password }}@localhost:5432/${{ inputs.postgres-db }}
@@ -421,17 +361,23 @@ jobs:
             ## 🧪 CI Test Results
 
             | Suite | Status |
-            |-------|--------|
+            |:------|:-------|
             | ✅ Lint & Build | ${{ needs.quick-checks.result == 'success' && '✅ Passed' || needs.quick-checks.result == 'failure' && '❌ Failed' || needs.quick-checks.result == 'skipped' && '⏭️ Skipped' || '⏳ Running' }} |
             | 🧪 Vitest Tests | ${{ needs.vitest-tests.result == 'success' && '✅ Passed' || needs.vitest-tests.result == 'failure' && '❌ Failed' || needs.vitest-tests.result == 'skipped' && '⏭️ Skipped' || '⏳ Running' }} |
             | 🔒 RLS Tests | ${{ needs.rls-tests.result == 'success' && '✅ Passed' || needs.rls-tests.result == 'failure' && '❌ Failed' || needs.rls-tests.result == 'skipped' && '⏭️ Skipped' || '⏳ Running' }} |
 
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '### 📊 Coverage' || '' }}
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '| Metric | Coverage | Status |' || '' }}
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '|--------|----------|--------|' || '' }}
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Lines | {0}% | {1} |', needs.vitest-tests.outputs.lines, needs.vitest-tests.outputs.lines >= 80 && '✅' || '⚠️') || '' }}
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Statements | {0}% | {1} |', needs.vitest-tests.outputs.statements, needs.vitest-tests.outputs.statements >= 80 && '✅' || '⚠️') || '' }}
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Functions | {0}% | {1} |', needs.vitest-tests.outputs.functions, needs.vitest-tests.outputs.functions >= 80 && '✅' || '⚠️') || '' }}
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Branches | {0}% | {1} |', needs.vitest-tests.outputs.branches, needs.vitest-tests.outputs.branches >= 80 && '✅' || '⚠️') || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '<details>' || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('<summary>📊 Coverage — {0}% lines &nbsp;·&nbsp; threshold: {1}</summary>', needs.vitest-tests.outputs.lines, inputs.coverage-threshold > 0 && format('{0}%', inputs.coverage-threshold) || 'none') || '' }}
 
-            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('📥 [Download coverage report]({0}/{1}/actions/runs/{2})', github.server_url, github.repository, github.run_id) || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '| Metric | Coverage | Status |' || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '|:-------|:--------:|:------:|' || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Lines | **{0}%** | {1} |', needs.vitest-tests.outputs.lines, inputs.coverage-threshold == 0 && '➖' || (fromJSON(needs.vitest-tests.outputs.lines) >= inputs.coverage-threshold && '✅' || '⚠️')) || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Statements | **{0}%** | {1} |', needs.vitest-tests.outputs.statements, inputs.coverage-threshold == 0 && '➖' || (fromJSON(needs.vitest-tests.outputs.statements) >= inputs.coverage-threshold && '✅' || '⚠️')) || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Functions | **{0}%** | {1} |', needs.vitest-tests.outputs.functions, inputs.coverage-threshold == 0 && '➖' || (fromJSON(needs.vitest-tests.outputs.functions) >= inputs.coverage-threshold && '✅' || '⚠️')) || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('| Branches | **{0}%** | {1} |', needs.vitest-tests.outputs.branches, inputs.coverage-threshold == 0 && '➖' || (fromJSON(needs.vitest-tests.outputs.branches) >= inputs.coverage-threshold && '✅' || '⚠️')) || '' }}
+
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && format('📥 [Download full coverage report]({0}/{1}/actions/runs/{2})', github.server_url, github.repository, github.run_id) || '' }}
+            ${{ needs.vitest-tests.outputs.coverage_available == 'true' && '</details>' || '' }}
+
+            ---
+            🔗 [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

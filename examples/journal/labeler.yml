@@ -1,0 +1,61 @@
+# .github/labeler.yml — copy to the target repo
+# Used by the auto-label workflow (actions/labeler@v5 format)
+# Journal is a monorepo: root / client / server
+
+frontend:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'client/src/**'
+      - 'client/public/**'
+      - 'client/index.html'
+      - 'client/vite.config.*'
+      - 'client/tailwind.config.*'
+      - 'client/postcss.config.*'
+
+api:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'server/src/**'
+      - 'server/routes/**'
+      - '!server/db/**'
+      - '!server/tests/**'
+
+database:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'server/db/**'
+      - 'server/drizzle.config.*'
+      - 'drizzle/**'
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.test.*'
+      - '**/*.spec.*'
+      - 'server/tests/**'
+      - 'client/src/**/*.test.*'
+      - 'vitest.config.*'
+      - 'server/vitest.config.*'
+
+docker:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Dockerfile'
+      - '*/Dockerfile'
+      - 'docker-compose*.yml'
+      - '.dockerignore'
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'
+
+deps:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'client/package.json'
+      - 'client/package-lock.json'
+      - 'server/package.json'
+      - 'server/package-lock.json'

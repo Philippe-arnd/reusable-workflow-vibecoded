@@ -68,7 +68,7 @@ jobs:
               return;
             }
 
-            if (pr.mergeable === 'CONFLICTING') {
+            if (pr.mergeable === false || pr.mergeable_state === 'dirty') {
               console.log('PR has conflicts — skipping');
               core.setOutput('pr_number', '');
               return;

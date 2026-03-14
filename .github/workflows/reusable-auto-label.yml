@@ -1,0 +1,29 @@
+name: Reusable Auto Label
+
+on:
+  workflow_call:
+    inputs:
+      configuration-path:
+        description: 'Path to the labeler configuration file in the calling repo'
+        type: string
+        default: '.github/labeler.yml'
+      sync-labels:
+        description: 'Remove labels when files no longer match the pattern'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    name: 🏷️ Auto Label PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 🏷️ Apply labels based on changed files
+        uses: actions/labeler@v5
+        with:
+          configuration-path: ${{ inputs.configuration-path }}
+          sync-labels: ${{ inputs.sync-labels }}

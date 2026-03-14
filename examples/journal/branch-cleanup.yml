@@ -1,0 +1,13 @@
+name: 🧹 Branch Cleanup
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+jobs:
+  cleanup:
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-branch-cleanup.yml@main
+    secrets: inherit
+    with:
+      base-branch: main

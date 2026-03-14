@@ -1,0 +1,54 @@
+# .github/labeler.yml — copy to the target repo
+# Used by the auto-label workflow (actions/labeler@v5 format)
+
+frontend:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'vite.config.*'
+      - 'tailwind.config.*'
+      - 'postcss.config.*'
+
+api:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'server/**'
+      - '!server/db/**'
+      - '!server/tests/**'
+
+database:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'server/db/**'
+      - 'server/drizzle.config.*'
+      - 'drizzle/**'
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.test.*'
+      - '**/*.spec.*'
+      - 'server/tests/**'
+      - 'vitest.config.*'
+
+docker:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Dockerfile'
+      - 'docker-compose*.yml'
+      - '.dockerignore'
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'
+
+deps:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'server/package.json'
+      - 'server/package-lock.json'

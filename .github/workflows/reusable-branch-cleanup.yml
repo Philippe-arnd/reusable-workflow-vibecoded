@@ -1,0 +1,54 @@
+name: Reusable Branch Cleanup
+
+on:
+  workflow_call:
+    inputs:
+      base-branch:
+        description: 'Only clean up branches targeting this base branch'
+        type: string
+        default: 'main'
+      protected-branches:
+        description: 'Space-separated list of branch names to never delete'
+        type: string
+        default: 'main master develop staging'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: 🧹 Delete Merged Branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # Only runs when a PR is actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: 🗑️ Delete source branch
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const baseBranch = '${{ inputs.base-branch }}';
+            const protected = '${{ inputs.protected-branches }}'.split(' ').filter(Boolean);
+
+            if (context.payload.pull_request.base.ref !== baseBranch) {
+              console.log(`PR targets '${context.payload.pull_request.base.ref}', not '${baseBranch}' — skipping`);
+              return;
+            }
+
+            if (protected.includes(branch)) {
+              console.log(`Branch '${branch}' is protected — skipping`);
+              return;
+            }
+
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`,
+              });
+              console.log(`✅ Deleted branch: ${branch}`);
+            } catch (error) {
+              // Branch may already be deleted (e.g. by GitHub's built-in setting)
+              console.log(`⚠️ Could not delete '${branch}': ${error.message}`);
+            }

@@ -12,6 +12,12 @@ on:
         type: string
         default: 'package-lock.json'
 
+      # Gitleaks
+      gitleaks-config-path:
+        description: 'Path to .gitleaks.toml config file (empty = use gitleaks built-in rules)'
+        type: string
+        default: '.gitleaks.toml'
+
       # Semgrep
       semgrep-extra-config:
         description: 'Extra Semgrep rulesets or paths, space-separated (appended to base config)'
@@ -69,6 +75,8 @@ jobs:
     name: 🔑 Secret Detection
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      contents: read
     steps:
       - name: 📥 Checkout code (full history)
         uses: actions/checkout@v6
@@ -79,7 +87,7 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_CONFIG: ${{ inputs.gitleaks-config-path }}
 
   # ─── Job 2: SAST Security Scan ────────────────────────────────────────────
   security-scan:
@@ -150,6 +158,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: ${{ inputs.run-bundle-analysis }}
+    permissions:
+      contents: read
     outputs:
       status: ${{ steps.analyze.outputs.status }}
       message: ${{ steps.analyze.outputs.message }}
@@ -283,22 +293,28 @@ jobs:
             <!-- ci-security-report -->
             ## 🔐 Security & Performance Report
 
-            | Check | Status |
-            |-------|--------|
-            | 🔑 Secret Detection | ${{ needs.secret-detection.result == 'success' && '✅ Passed' || needs.secret-detection.result == 'failure' && '❌ Failed' || '⏭️ Skipped' }} |
-            | 🛡️ Security Scan | ${{ needs.security-scan.outputs.status || (needs.security-scan.result == 'failure' && '❌ Failed' || '⏭️ Skipped') }} — ${{ needs.security-scan.outputs.message || '' }} |
-            | 📦 Bundle Size | ${{ needs.bundle-analysis.outputs.status || '⏭️ Skipped' }} — ${{ needs.bundle-analysis.outputs.message || '' }} |
+            | Check | Status | Details |
+            |:------|:------:|:--------|
+            | 🔑 Secret Detection | ${{ needs.secret-detection.result == 'success' && '✅' || needs.secret-detection.result == 'failure' && '❌' || '⏭️' }} | ${{ needs.secret-detection.result == 'success' && 'No secrets found' || needs.secret-detection.result == 'failure' && '**Secrets detected — review immediately**' || 'Skipped' }} |
+            | 🛡️ SAST (Semgrep) | ${{ needs.security-scan.result == 'success' && '✅' || needs.security-scan.result == 'failure' && '❌' || '⏭️' }} | ${{ needs.security-scan.outputs.message || (needs.security-scan.result == 'failure' && 'Scan failed' || 'Skipped') }} |
+            | 📦 Bundle Size | ${{ needs.bundle-analysis.result == 'success' && '✅' || needs.bundle-analysis.result == 'failure' && '❌' || '⏭️' }} | ${{ needs.bundle-analysis.outputs.status || 'Skipped' }} — ${{ needs.bundle-analysis.outputs.message || '' }} |
 
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '### 📦 Bundle Details' || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '| Asset | Size | Gzipped | Δ vs baseline |' || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '|:------|-----:|--------:|:--------------|' || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && format('| JavaScript | {0} KB | {1} KB | {2}{3} KB ({4}{5}%) |', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_gzip_kb, needs.bundle-analysis.outputs.js_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.js_diff_kb, needs.bundle-analysis.outputs.js_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.js_pct) || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && format('| CSS | {0} KB | {1} KB | {2}{3} KB ({4}{5}%) |', needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_gzip_kb, needs.bundle-analysis.outputs.css_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.css_diff_kb, needs.bundle-analysis.outputs.css_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.css_pct) || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && '### 📦 Bundle Details' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && '<details>' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && format('<summary>📦 Bundle Breakdown &nbsp;·&nbsp; JS: {0} KB ({1} KB gzip) &nbsp;·&nbsp; CSS: {2} KB ({3} KB gzip)</summary>', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_gzip_kb, needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_gzip_kb) || '' }}
+
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '| Asset | Size | Gzip | Δ vs baseline |' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && '|:------|-----:|-----:|:--------------|' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && format('| JavaScript | **{0} KB** | {1} KB | {2}{3} KB &nbsp; `{4}{5}%` |', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_gzip_kb, needs.bundle-analysis.outputs.js_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.js_diff_kb, needs.bundle-analysis.outputs.js_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.js_pct) || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'relative' && format('| CSS | **{0} KB** | {1} KB | {2}{3} KB &nbsp; `{4}{5}%` |', needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_gzip_kb, needs.bundle-analysis.outputs.css_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.css_diff_kb, needs.bundle-analysis.outputs.css_diff_kb > 0 && '+' || '', needs.bundle-analysis.outputs.css_pct) || '' }}
             ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && '| Asset | Size | % of limit |' || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && '|:------|-----:|-----------:|' || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && format('| JavaScript | {0} KB | {1}% |', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_pct) || '' }}
-            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && format('| CSS | {0} KB | {1}% |', needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_pct) || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && '|:------|-----:|----------:|' || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && format('| JavaScript | **{0} KB** | `{1}%` |', needs.bundle-analysis.outputs.js_kb, needs.bundle-analysis.outputs.js_pct) || '' }}
+            ${{ needs.bundle-analysis.result == 'success' && needs.bundle-analysis.outputs.mode == 'absolute' && format('| CSS | **{0} KB** | `{1}%` |', needs.bundle-analysis.outputs.css_kb, needs.bundle-analysis.outputs.css_pct) || '' }}
+
+            ${{ needs.bundle-analysis.result == 'success' && '</details>' || '' }}
+
+            ---
+            🔗 [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) &nbsp;·&nbsp; 🔐 [Security tab](${{ github.server_url }}/${{ github.repository }}/security)
 
       - name: ❌ Fail if blocking checks failed
         if: needs.secret-detection.result == 'failure' || needs.security-scan.result == 'failure'

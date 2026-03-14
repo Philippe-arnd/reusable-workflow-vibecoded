@@ -1,0 +1,105 @@
+name: Reusable Update Bundle Baseline
+
+# Triggered on push to main (after a PR is merged).
+# Rebuilds the bundle, measures its size, and commits updated baseline values
+# back into the caller's security-performance workflow file.
+# Only useful for consumers using relative diff mode (bundle-js-baseline-kb > 0).
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version'
+        type: string
+        default: '24'
+      install-command:
+        description: 'Command to install dependencies'
+        type: string
+        default: 'npm ci'
+      cache-dependency-path:
+        description: 'Path to package-lock.json for npm cache'
+        type: string
+        default: 'package-lock.json'
+      build-command:
+        description: 'Build command'
+        type: string
+        default: 'npm run build'
+      build-env:
+        description: 'Env vars for the build step, one KEY=VALUE per line'
+        type: string
+        default: ''
+      bundle-client-dir:
+        description: 'Directory containing dist/assets/ after build'
+        type: string
+        default: '.'
+      workflow-file:
+        description: 'Path to the security-performance workflow file to update (e.g. .github/workflows/security-performance.yml)'
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  update-baseline:
+    name: 📏 Update Bundle Size Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
+        with:
+          # Use the default GITHUB_TOKEN — pushes from this token won't
+          # re-trigger workflows, so no infinite loop.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+      - name: 📦 Install dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: 🏗️ Build
+        run: |
+          if [ -n "$BUILD_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && export "$line"
+            done <<< "$BUILD_ENV"
+          fi
+          ${{ inputs.build-command }}
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+
+      - name: 📏 Measure bundle and update baseline
+        working-directory: ${{ inputs.bundle-client-dir }}
+        run: |
+          JS_KB=$(find dist/assets -name '*.js' -exec du -b {} + 2>/dev/null \
+            | awk '{sum+=$1} END {printf "%.0f", sum/1024}' || echo 0)
+          CSS_KB=$(find dist/assets -name '*.css' -exec du -b {} + 2>/dev/null \
+            | awk '{sum+=$1} END {printf "%.0f", sum/1024}' || echo 0)
+
+          echo "Measured JS: ${JS_KB} KB  CSS: ${CSS_KB} KB"
+
+          WORKFLOW="${{ github.workspace }}/${{ inputs.workflow-file }}"
+
+          sed -i "s/bundle-js-baseline-kb: [0-9]*/bundle-js-baseline-kb: ${JS_KB}/" "$WORKFLOW"
+          sed -i "s/bundle-css-baseline-kb: [0-9]*/bundle-css-baseline-kb: ${CSS_KB}/" "$WORKFLOW"
+
+          echo "Updated ${{ inputs.workflow-file }}"
+
+      - name: 💾 Commit updated baseline
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ${{ inputs.workflow-file }}
+          if git diff --staged --quiet; then
+            echo "Bundle size unchanged — no commit needed"
+          else
+            git commit -m "chore: update bundle size baseline [skip ci]"
+            git push
+            echo "✅ Baseline committed"
+          fi

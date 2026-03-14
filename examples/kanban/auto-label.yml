@@ -1,0 +1,10 @@
+name: 🏷️ Auto Label
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  label:
+    uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-auto-label.yml@main
+    secrets: inherit

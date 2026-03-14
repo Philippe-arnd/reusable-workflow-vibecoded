@@ -1,0 +1,81 @@
+name: Setup Test Database
+description: >
+  Installs the PostgreSQL client, waits for the service, creates app_user,
+  runs migrations, grants permissions, and applies RLS policies.
+
+inputs:
+  postgres-db:
+    description: 'Test database name'
+    required: true
+  postgres-admin-password:
+    # Ephemeral CI credential — never used outside the isolated runner
+    description: 'Postgres superuser password'
+    required: true
+  app-user:
+    description: 'Non-superuser for RLS-enforced connections'
+    required: true
+  app-password:
+    # Ephemeral CI credential — never used outside the isolated runner
+    description: 'Password for app_user'
+    required: true
+  db-migration-command:
+    description: 'Migration command (empty = skip)'
+    required: false
+    default: ''
+  db-rls-setup-command:
+    description: 'RLS setup command (empty = skip)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: 🛢️ Install PostgreSQL client
+      shell: bash
+      run: sudo apt-get install -y postgresql-client
+
+    - name: ⏳ Wait for PostgreSQL
+      shell: bash
+      run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
+
+    - name: 👤 Create app_user
+      shell: bash
+      run: |
+        psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
+          -c "CREATE USER ${{ inputs.app-user }} WITH PASSWORD '${{ inputs.app-password }}';"
+        psql -h localhost -U postgres -d ${{ inputs.postgres-db }} \
+          -c "GRANT CONNECT ON DATABASE ${{ inputs.postgres-db }} TO ${{ inputs.app-user }};"
+      env:
+        PGPASSWORD: ${{ inputs.postgres-admin-password }}
+
+    - name: 🔄 Run database migrations
+      if: ${{ inputs.db-migration-command != '' }}
+      shell: bash
+      run: ${{ inputs.db-migration-command }}
+      env:
+        DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+        ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+        DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+
+    - name: 🔑 Grant app_user permissions
+      shell: bash
+      run: |
+        psql -h localhost -U postgres -d ${{ inputs.postgres-db }} -c \
+          "GRANT USAGE ON SCHEMA public TO ${{ inputs.app-user }};
+           GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${{ inputs.app-user }};
+           GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${{ inputs.app-user }};
+           ALTER DEFAULT PRIVILEGES IN SCHEMA public
+             GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ${{ inputs.app-user }};
+           ALTER DEFAULT PRIVILEGES IN SCHEMA public
+             GRANT USAGE,SELECT ON SEQUENCES TO ${{ inputs.app-user }};"
+      env:
+        PGPASSWORD: ${{ inputs.postgres-admin-password }}
+
+    - name: 🛡️ Apply RLS policies
+      if: ${{ inputs.db-rls-setup-command != '' }}
+      shell: bash
+      run: ${{ inputs.db-rls-setup-command }}
+      env:
+        DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+        ADMIN_DATABASE_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}
+        DATABASE_ADMIN_URL: postgresql://postgres:${{ inputs.postgres-admin-password }}@localhost:5432/${{ inputs.postgres-db }}

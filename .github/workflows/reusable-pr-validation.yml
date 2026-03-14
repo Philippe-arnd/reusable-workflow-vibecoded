@@ -182,7 +182,7 @@ jobs:
         run: ${{ inputs.install-command }}
 
       - name: 🗄️ Setup test database
-        uses: ./.github/actions/setup-db
+        uses: Philippe-arnd/reusable-workflow-vibecoded/.github/actions/setup-db@main
         with:
           postgres-db: ${{ inputs.postgres-db }}
           postgres-admin-password: ${{ inputs.postgres-admin-password }}
@@ -297,7 +297,7 @@ jobs:
         run: ${{ inputs.install-command }}
 
       - name: 🗄️ Setup test database
-        uses: ./.github/actions/setup-db
+        uses: Philippe-arnd/reusable-workflow-vibecoded/.github/actions/setup-db@main
         with:
           postgres-db: ${{ inputs.postgres-db }}
           postgres-admin-password: ${{ inputs.postgres-admin-password }}

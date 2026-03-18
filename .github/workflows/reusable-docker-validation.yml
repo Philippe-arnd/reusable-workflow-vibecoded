@@ -108,6 +108,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: write
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
@@ -146,6 +147,22 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
         continue-on-error: true
+
+      - name: 📋 Generate SBOM (single mode)
+        if: ${{ !inputs.use-compose && inputs.run-trivy-scan }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.image-tag }}
+          format: 'spdx-json'
+          output: 'sbom.spdx.json'
+
+      - name: 📤 Upload SBOM artifact (single mode)
+        if: ${{ !inputs.use-compose && inputs.run-trivy-scan }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: sbom-spdx
+          path: sbom.spdx.json
+          retention-days: 90
 
       - name: 🌐 Create Docker network (single mode)
         if: ${{ !inputs.use-compose }}
@@ -251,6 +268,22 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
         continue-on-error: true
+
+      - name: 📋 Generate SBOM (compose mode)
+        if: ${{ inputs.use-compose && inputs.run-trivy-scan && inputs.trivy-compose-image != '' }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.trivy-compose-image }}
+          format: 'spdx-json'
+          output: 'sbom.spdx.json'
+
+      - name: 📤 Upload SBOM artifact (compose mode)
+        if: ${{ inputs.use-compose && inputs.run-trivy-scan && inputs.trivy-compose-image != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: sbom-spdx
+          path: sbom.spdx.json
+          retention-days: 90
 
       - name: 🚀 Start services (compose mode)
         if: ${{ inputs.use-compose }}

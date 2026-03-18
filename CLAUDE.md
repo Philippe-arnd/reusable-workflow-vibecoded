@@ -82,6 +82,12 @@ Single job with two mode branches via `use-compose: boolean`:
 - **Single mode** (`use-compose: false`): builds with `docker build`, starts postgres + app containers, dynamic port detection via `docker port`, polls `health-endpoint`
 - **Compose mode** (`use-compose: true`): runs `docker compose build` + `docker compose up -d`, health-checks by exec-ing into `compose-health-service`
 
+When `run-trivy-scan: true`, two Trivy passes run after the build:
+1. SARIF scan → uploaded to GitHub Security tab
+2. SBOM generation → `sbom.spdx.json` uploaded as a workflow artifact (retained 90 days)
+
+The SBOM is skipped in compose mode when `trivy-compose-image` is empty (same condition as the SARIF scan).
+
 ### reusable-dependency-review.yml
 
 Thin wrapper around `actions/dependency-review-action@v4`. Notable inputs:
@@ -106,6 +112,7 @@ Triggered by `workflow_run` in the calling workflow. Verifies all `required-chec
 | Bundle mode | Absolute limits (JS 600KB, CSS 80KB) | Relative diff (JS 543KB baseline) |
 | Bundle dir | `.` | `client` |
 | Docker | Single Dockerfile | docker-compose |
+| Docker trigger | `push: tags v*` + PR path filter (Dockerfile) | `push: tags v*` + PR path filter (Dockerfile) |
 | Semgrep extras | `.semgrep.yml` | `p/typescript .semgrep.yml` |
 
 ## Test Strategy: Parallel Validation

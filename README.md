@@ -16,7 +16,7 @@ Reusable GitHub Actions workflows for projects built with the **Vibecoding** sta
 |:---------|:--------|:-----|
 | [🧪 PR Validation](#-pr-validation) | `pull_request` | Lint · Build · Vitest · RLS · Coverage |
 | [🔐 Security & Performance](#-security--performance) | `pull_request` | Gitleaks · Semgrep · Bundle size |
-| [🐳 Docker Validation](#-docker-validation) | `pull_request` | Build · Trivy scan · Health check |
+| [🐳 Docker Validation](#-docker-validation) | `push [tag v*]` · `pull_request [Dockerfile]` | Build · Trivy scan · SBOM · Health check |
 | [🔎 Dependency Review](#-dependency-review) | `pull_request` | CVE check · License check |
 | [🤖 Auto Merge](#-auto-merge) | `workflow_run` | Verify checks · Squash merge |
 | [🧹 Branch Cleanup](#-branch-cleanup) | `pull_request [closed]` | Delete merged branch |
@@ -123,7 +123,11 @@ jobs:
 
 ## 🐳 Docker Validation
 
-Supports both single Dockerfile and Docker Compose. Includes Trivy CVE image scanning with SARIF upload.
+Supports both single Dockerfile and Docker Compose. Triggers on tag push (`v*`) for release validation and on pull requests that modify Dockerfile-related files.
+
+When `run-trivy-scan: true`, two Trivy passes run after the build:
+1. **SARIF scan** → results uploaded to the GitHub Security tab
+2. **SBOM** → `sbom.spdx.json` (SPDX format) uploaded as a workflow artifact, retained 90 days
 
 **Key inputs**
 
@@ -132,15 +136,27 @@ Supports both single Dockerfile and Docker Compose. Includes Trivy CVE image sca
 | `use-compose` | `false` | `true` for docker-compose projects |
 | `image-tag` | `app:ci-test` | Tag for the built image (single mode) |
 | `health-endpoint` | `/api/health` | HTTP path polled to confirm the app is up |
-| `run-trivy-scan` | `true` | Scan the built image for OS/dependency CVEs |
+| `run-trivy-scan` | `true` | Scan the built image for OS/dependency CVEs + generate SBOM |
 | `trivy-severity` | `CRITICAL,HIGH` | Severity levels to report |
 | `trivy-fail-on-finding` | `false` | Fail the job on CVE findings (warn-only by default) |
-| `trivy-compose-image` | — | Image name to scan in compose mode — empty = skip Trivy |
+| `trivy-compose-image` | — | Image name to scan in compose mode — empty = skip Trivy + SBOM |
 
 ```yaml
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose*.yml'
+      - '.dockerignore'
+
 jobs:
   docker:
-    if: github.event.pull_request.draft == false
+    if: github.event.pull_request.draft != true
     uses: Philippe-arnd/reusable-workflow-vibecoded/.github/workflows/reusable-docker-validation.yml@main
     secrets: inherit
     with:

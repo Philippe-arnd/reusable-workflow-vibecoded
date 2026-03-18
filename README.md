@@ -16,7 +16,7 @@ Reusable GitHub Actions workflows for projects built with the **Vibecoding** sta
 |:---------|:--------|:-----|
 | [🧪 PR Validation](#-pr-validation) | `pull_request` | Lint · Build · Vitest · RLS · Coverage |
 | [🔐 Security & Performance](#-security--performance) | `pull_request` | Gitleaks · Semgrep · Bundle size |
-| [🐳 Docker Validation](#-docker-validation) | `push [tag v*]` · `pull_request [Dockerfile]` | Build · Trivy scan · SBOM · Health check |
+| [🐳 Docker Validation](#-docker-validation) | `push [tag release-*]` · `pull_request [Dockerfile]` | Build · Trivy scan · SBOM · Health check |
 | [🔎 Dependency Review](#-dependency-review) | `pull_request` | CVE check · License check |
 | [🤖 Auto Merge](#-auto-merge) | `workflow_run` | Verify checks · Squash merge |
 | [🧹 Branch Cleanup](#-branch-cleanup) | `pull_request [closed]` | Delete merged branch |
@@ -123,7 +123,9 @@ jobs:
 
 ## 🐳 Docker Validation
 
-Supports both single Dockerfile and Docker Compose. Triggers on tag push (`v*`) for release validation and on pull requests that modify Dockerfile-related files.
+Supports both single Dockerfile and Docker Compose. Triggers on release tag push (`release-*`) for release validation and on pull requests that modify Dockerfile-related files.
+
+> **Tag pattern is configurable** — `release-*` is the recommended convention. Use `v*` if your project follows semver tags.
 
 When `run-trivy-scan: true`, two Trivy passes run after the build:
 1. **SARIF scan** → results uploaded to the GitHub Security tab
@@ -145,7 +147,7 @@ When `run-trivy-scan: true`, two Trivy passes run after the build:
 on:
   push:
     tags:
-      - 'v*'
+      - 'release-*'   # or 'v*' for semver projects
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -153,6 +155,10 @@ on:
       - 'Dockerfile'
       - 'docker-compose*.yml'
       - '.dockerignore'
+
+concurrency:
+  group: docker-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   docker:
@@ -355,7 +361,7 @@ Ready-to-use caller files in `examples/` — copy to the target project's `.gith
 | Coverage path | `coverage/` | `server/coverage/` |
 | Bundle mode | Absolute (JS 600 KB · CSS 80 KB) | Relative diff (JS 543 KB baseline) |
 | Bundle dir | `.` | `client/` |
-| Docker | Single Dockerfile | docker-compose |
+| Docker | Single Dockerfile · tag `release-*` | docker-compose |
 | Semgrep extras | `.semgrep.yml` | `p/typescript .semgrep.yml` |
 | Bundle baseline auto-update | — | ✅ |
 

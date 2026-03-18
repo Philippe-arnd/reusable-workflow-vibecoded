@@ -69,6 +69,10 @@ on:
         default: ''
 
       # Docker Compose mode
+      compose-env-content:
+        description: 'Contents of the .env file to create before docker compose build/up (compose mode only), one KEY=VALUE per line'
+        type: string
+        default: ''
       compose-services-to-build:
         description: 'Space-separated list of services to build (compose mode only, empty = all)'
         type: string
@@ -243,6 +247,12 @@ jobs:
           docker network rm ci-test-net 2>/dev/null || true
 
       # ── Docker Compose mode ─────────────────────────────────────────────
+      - name: 📝 Create .env file (compose mode)
+        if: ${{ inputs.use-compose && inputs.compose-env-content != '' }}
+        env:
+          ENV_CONTENT: ${{ inputs.compose-env-content }}
+        run: printf '%s\n' "$ENV_CONTENT" > .env
+
       - name: 🏗️ Build images (compose mode)
         if: ${{ inputs.use-compose }}
         run: |

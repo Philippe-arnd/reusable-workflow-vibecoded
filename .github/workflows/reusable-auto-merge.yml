@@ -41,7 +41,7 @@ jobs:
   auto-merge:
     name: 🤖 Auto Merge
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     # Only run when the triggering workflow succeeded.
     # inputs.triggering-conclusion is forwarded by the caller because workflow_call
     # does not propagate the parent workflow_run event payload.
@@ -116,42 +116,106 @@ jobs:
               pull_number: prNumber,
             });
 
-            const { data: checks } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: pr.head.sha,
-            });
+            const sha = pr.head.sha;
+            const MAX_ATTEMPTS = 16;
+            const POLL_INTERVAL_MS = 30_000;
 
-            const checkMap = {};
-            for (const run of checks.check_runs) {
-              checkMap[run.name] = { status: run.status, conclusion: run.conclusion };
-            }
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-            let allPassed = true;
+            const getCheckMap = async () => {
+              const { data: checks } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: sha,
+                per_page: 100,
+              });
+              const map = {};
+              for (const run of checks.check_runs) {
+                // Keep the most recent run for each check name
+                if (!map[run.name] || run.id > map[run.name].id) {
+                  map[run.name] = { id: run.id, status: run.status, conclusion: run.conclusion };
+                }
+              }
+              return map;
+            };
 
-            for (const name of requiredChecks) {
-              const c = checkMap[name];
-              if (!c || c.status !== 'completed' || c.conclusion !== 'success') {
-                console.log(`❌ Required check '${name}': ${c ? `${c.status}/${c.conclusion}` : 'not found'}`);
-                allPassed = false;
-              } else {
-                console.log(`✅ ${name}: passed`);
+            let attempt = 0;
+            while (attempt < MAX_ATTEMPTS) {
+              attempt++;
+              const checkMap = await getCheckMap();
+
+              // Detect any required check that has already failed — no point waiting
+              let failedEarly = false;
+              for (const name of requiredChecks) {
+                const c = checkMap[name];
+                if (c && c.status === 'completed' && c.conclusion !== 'success') {
+                  console.log(`❌ Required check '${name}' failed (${c.conclusion}) — aborting`);
+                  failedEarly = true;
+                }
+              }
+              if (failedEarly) {
+                core.setOutput('ready', 'false');
+                core.setOutput('pr_number', String(prNumber));
+                return;
+              }
+
+              // Check if all required checks are completed
+              const allRequired = requiredChecks.every(name => {
+                const c = checkMap[name];
+                return c && c.status === 'completed';
+              });
+
+              // Check if any conditional checks that exist are still pending
+              const allConditional = conditionalChecks.every(name => {
+                const c = checkMap[name];
+                return !c || c.status === 'completed';
+              });
+
+              if (allRequired && allConditional) {
+                // All checks are done — evaluate results
+                let allPassed = true;
+
+                for (const name of requiredChecks) {
+                  const c = checkMap[name];
+                  if (c.conclusion === 'success') {
+                    console.log(`✅ ${name}: passed`);
+                  } else {
+                    console.log(`❌ Required check '${name}': ${c.conclusion}`);
+                    allPassed = false;
+                  }
+                }
+
+                for (const name of conditionalChecks) {
+                  const c = checkMap[name];
+                  if (!c) {
+                    console.log(`⏭️ Conditional check '${name}': not found (did not run — skipping)`);
+                  } else if (c.conclusion === 'success') {
+                    console.log(`✅ ${name}: passed`);
+                  } else {
+                    console.log(`❌ Conditional check '${name}': ${c.conclusion} (ran but did not pass)`);
+                    allPassed = false;
+                  }
+                }
+
+                core.setOutput('ready', allPassed ? 'true' : 'false');
+                core.setOutput('pr_number', String(prNumber));
+                return;
+              }
+
+              // Some checks are still pending — log and wait
+              const pending = [
+                ...requiredChecks.filter(n => !checkMap[n] || checkMap[n].status !== 'completed'),
+                ...conditionalChecks.filter(n => checkMap[n] && checkMap[n].status !== 'completed'),
+              ];
+              console.log(`⏳ Attempt ${attempt}/${MAX_ATTEMPTS}: waiting for: ${pending.join(', ')}`);
+
+              if (attempt < MAX_ATTEMPTS) {
+                await sleep(POLL_INTERVAL_MS);
               }
             }
 
-            for (const name of conditionalChecks) {
-              const c = checkMap[name];
-              if (!c) {
-                console.log(`⏭️ Conditional check '${name}': not found (did not run — skipping)`);
-              } else if (c.status !== 'completed' || c.conclusion !== 'success') {
-                console.log(`❌ Conditional check '${name}': ${c.status}/${c.conclusion} (ran but did not pass)`);
-                allPassed = false;
-              } else {
-                console.log(`✅ ${name}: passed`);
-              }
-            }
-
-            core.setOutput('ready', allPassed ? 'true' : 'false');
+            console.log('⏰ Timed out waiting for required checks to complete — skipping merge');
+            core.setOutput('ready', 'false');
             core.setOutput('pr_number', String(prNumber));
 
       - name: 🔀 Merge PR

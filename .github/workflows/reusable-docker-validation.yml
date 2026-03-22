@@ -95,6 +95,10 @@ on:
         description: 'Severity levels to report, comma-separated (UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL)'
         type: string
         default: 'CRITICAL,HIGH'
+      trivy-ignore-unfixed:
+        description: 'Only report vulnerabilities that have a fix available (reduces noise from unactionable CVEs)'
+        type: boolean
+        default: true
       trivy-fail-on-finding:
         description: 'Fail the job when Trivy finds vulnerabilities at the configured severity'
         type: boolean
@@ -143,6 +147,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: ${{ inputs.trivy-severity }}
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
           exit-code: ${{ inputs.trivy-fail-on-finding && '1' || '0' }}
 
       - name: 📤 Upload Trivy results to Security tab (single mode)
@@ -270,6 +275,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: ${{ inputs.trivy-severity }}
+          ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
           exit-code: ${{ inputs.trivy-fail-on-finding && '1' || '0' }}
 
       - name: 📤 Upload Trivy results to Security tab (compose mode)

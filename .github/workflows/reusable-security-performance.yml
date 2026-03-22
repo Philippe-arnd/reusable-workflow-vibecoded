@@ -84,7 +84,7 @@ jobs:
           fetch-depth: 0
 
       - name: 🔍 Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: ${{ inputs.gitleaks-config-path }}
@@ -115,7 +115,6 @@ jobs:
             p/react
             p/nodejs
             ${{ inputs.semgrep-extra-config }}
-          generateSarif: '1'
 
       - name: 📤 Upload SARIF to GitHub Security tab
         if: always()

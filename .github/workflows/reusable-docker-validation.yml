@@ -99,6 +99,10 @@ on:
         description: 'Only report vulnerabilities that have a fix available (reduces noise from unactionable CVEs)'
         type: boolean
         default: true
+      trivy-ignorefile:
+        description: 'Path to .trivyignore file for suppressing known false positives (relative to repo root)'
+        type: string
+        default: '.trivyignore'
       trivy-fail-on-finding:
         description: 'Fail the job when Trivy finds vulnerabilities at the configured severity'
         type: boolean
@@ -148,6 +152,7 @@ jobs:
           output: 'trivy-results.sarif'
           severity: ${{ inputs.trivy-severity }}
           ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          trivyignores: ${{ inputs.trivy-ignorefile }}
           exit-code: ${{ inputs.trivy-fail-on-finding && '1' || '0' }}
 
       - name: 📤 Upload Trivy results to Security tab (single mode)
@@ -276,6 +281,7 @@ jobs:
           output: 'trivy-results.sarif'
           severity: ${{ inputs.trivy-severity }}
           ignore-unfixed: ${{ inputs.trivy-ignore-unfixed }}
+          trivyignores: ${{ inputs.trivy-ignorefile }}
           exit-code: ${{ inputs.trivy-fail-on-finding && '1' || '0' }}
 
       - name: 📤 Upload Trivy results to Security tab (compose mode)

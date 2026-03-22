@@ -344,6 +344,7 @@ jobs:
     steps:
       - name: 🔍 Find existing PR comment
         id: find-comment
+        if: ${{ github.event.pull_request.number != '' }}
         uses: peter-evans/find-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -351,6 +352,7 @@ jobs:
           body-includes: '<!-- ci-test-results -->'
 
       - name: 💬 Post PR comment
+        if: ${{ github.event.pull_request.number != '' }}
         uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}

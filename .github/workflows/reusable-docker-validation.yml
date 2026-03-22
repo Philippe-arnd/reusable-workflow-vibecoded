@@ -305,6 +305,15 @@ jobs:
         if: ${{ inputs.use-compose }}
         run: docker compose up -d
 
+      - name: 📋 Collect container logs on failure (compose mode)
+        if: ${{ inputs.use-compose && failure() }}
+        run: |
+          echo "=== Container statuses ==="
+          docker compose ps -a
+          echo ""
+          echo "=== All container logs (last 100 lines each) ==="
+          docker compose logs --tail=100
+
       - name: 🏥 Health check (compose mode)
         if: ${{ inputs.use-compose }}
         run: |

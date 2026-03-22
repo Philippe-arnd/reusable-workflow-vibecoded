@@ -88,6 +88,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: ${{ inputs.gitleaks-config-path }}
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
   # ─── Job 2: SAST Security Scan ────────────────────────────────────────────
   security-scan:
@@ -106,15 +107,19 @@ jobs:
 
       - name: 🛡️ Run Semgrep
         id: semgrep
-        uses: semgrep/semgrep-action@v1
         continue-on-error: true
-        with:
-          config: >-
-            p/security-audit
-            p/javascript
-            p/react
-            p/nodejs
-            ${{ inputs.semgrep-extra-config }}
+        run: |
+          pip install semgrep --quiet
+          CONFIGS="--config p/security-audit --config p/javascript --config p/react --config p/nodejs"
+          EXTRA="${{ inputs.semgrep-extra-config }}"
+          if [ -n "$EXTRA" ]; then
+            for cfg in $EXTRA; do
+              CONFIGS="$CONFIGS --config $cfg"
+            done
+          fi
+          semgrep scan $CONFIGS --sarif --output semgrep.sarif . || true
+          # Exit with code 1 if findings exist so outcome is 'failure' for downstream parsing
+          [ -f semgrep.sarif ] && jq -e '.runs[].results | length > 0' semgrep.sarif > /dev/null && exit 1 || exit 0
 
       - name: 📤 Upload SARIF to GitHub Security tab
         if: always()

@@ -77,6 +77,8 @@ jobs:
     timeout-minutes: 2
     permissions:
       contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - name: 📥 Checkout code (full history)
         uses: actions/checkout@v6
@@ -88,7 +90,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: ${{ inputs.gitleaks-config-path }}
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
   # ─── Job 2: SAST Security Scan ────────────────────────────────────────────
   security-scan:

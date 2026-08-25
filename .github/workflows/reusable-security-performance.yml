@@ -81,12 +81,12 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - name: 📥 Checkout code (full history)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: 🔍 Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2.3.9
+        uses: gitleaks/gitleaks-action@v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: ${{ inputs.gitleaks-config-path }}
@@ -104,13 +104,16 @@ jobs:
       message: ${{ steps.result.outputs.message }}
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: 🛡️ Run Semgrep
         id: semgrep
         continue-on-error: true
         run: |
-          pip install semgrep --quiet
+          # Pinned via .github/workflows/requirements-semgrep.txt (Renovate-tracked pip
+          # requirements file) so the ruleset/CLI pairing is reproducible instead of
+          # drifting to whatever `pip install semgrep` resolves to on a given day.
+          pip install -r "${{ github.workspace }}/.github/workflows/requirements-semgrep.txt" --quiet
           CONFIGS="--config p/security-audit --config p/javascript --config p/react --config p/nodejs"
           EXTRA="${{ inputs.semgrep-extra-config }}"
           if [ -n "$EXTRA" ]; then
@@ -118,7 +121,22 @@ jobs:
               CONFIGS="$CONFIGS --config $cfg"
             done
           fi
-          semgrep scan $CONFIGS --sarif --output semgrep.sarif . || true
+          semgrep scan $CONFIGS --sarif --output semgrep.sarif . 2>&1 | tee semgrep-run.log
+
+          # Guard against silent rule-coverage loss: a PatternParseError (or similar)
+          # makes semgrep skip incompatible rules and keep going with exit 0, so a run
+          # can quietly execute a fraction of the intended ruleset while still reporting
+          # "0 findings" as if coverage were complete. Surface that instead of hiding it.
+          LOADED=$(grep -oE '[0-9]+ Code rules' semgrep-run.log | grep -oE '^[0-9]+' | head -1 || true)
+          RAN=$(grep -oE 'Ran [0-9]+ rules on' semgrep-run.log | grep -oE '[0-9]+' | head -1 || true)
+          echo "loaded_rules=${LOADED:-0}" >> "$GITHUB_OUTPUT"
+          echo "ran_rules=${RAN:-0}"       >> "$GITHUB_OUTPUT"
+          if [ -n "$LOADED" ] && [ -n "$RAN" ] && [ "$LOADED" -gt 0 ] && [ "$RAN" -lt $((LOADED * 80 / 100)) ]; then
+            echo "coverage_dropped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "coverage_dropped=false" >> "$GITHUB_OUTPUT"
+          fi
+
           # Exit with code 1 if findings exist so outcome is 'failure' for downstream parsing
           [ -f semgrep.sarif ] && jq -e '.runs[].results | length > 0' semgrep.sarif > /dev/null && exit 1 || exit 0
 
@@ -133,10 +151,9 @@ jobs:
         if: always()
         id: result
         run: |
-          if [ "${{ steps.semgrep.outcome }}" = "success" ]; then
-            echo "status=✅ Pass"           >> $GITHUB_OUTPUT
-            echo "message=No issues found" >> $GITHUB_OUTPUT
-          elif [ -f semgrep.sarif ]; then
+          # Real findings (outcome == failure) always take priority over the coverage
+          # check below — a rule-parsing warning must never bury an actual critical hit.
+          if [ "${{ steps.semgrep.outcome }}" = "failure" ] && [ -f semgrep.sarif ]; then
             ERRORS=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif 2>/dev/null || echo "0")
             WARNINGS=$(jq '[.runs[].results[] | select(.level == "warning")] | length' semgrep.sarif 2>/dev/null || echo "0")
             if [ "$ERRORS" -gt 0 ]; then
@@ -146,6 +163,12 @@ jobs:
               echo "status=⚠️ Warning"               >> $GITHUB_OUTPUT
               echo "message=${WARNINGS} warning(s)"  >> $GITHUB_OUTPUT
             fi
+          elif [ "${{ steps.semgrep.outcome }}" = "success" ] && [ "${{ steps.semgrep.outputs.coverage_dropped }}" = "true" ]; then
+            echo "status=⚠️ Warning" >> $GITHUB_OUTPUT
+            echo "message=Only ${{ steps.semgrep.outputs.ran_rules }}/${{ steps.semgrep.outputs.loaded_rules }} rules ran (parse errors — check job log)" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.semgrep.outcome }}" = "success" ]; then
+            echo "status=✅ Pass"           >> $GITHUB_OUTPUT
+            echo "message=No issues found" >> $GITHUB_OUTPUT
           else
             echo "status=❌ Fail"       >> $GITHUB_OUTPUT
             echo "message=Scan failed" >> $GITHUB_OUTPUT
@@ -179,10 +202,10 @@ jobs:
       mode: ${{ steps.analyze.outputs.mode }}
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: ⚙️ Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'npm'

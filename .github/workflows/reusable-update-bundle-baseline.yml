@@ -47,14 +47,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Use the default GITHUB_TOKEN — pushes from this token won't
           # re-trigger workflows, so no infinite loop.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: ⚙️ Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'npm'

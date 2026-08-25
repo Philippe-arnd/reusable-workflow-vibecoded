@@ -74,7 +74,7 @@ Bundle analysis has two modes selected by whether baseline inputs are provided:
 
 `bundle-client-dir` sets the working directory for the build and the `dist/assets/` path.
 
-Semgrep base config is always `p/security-audit p/javascript p/react p/nodejs`. Add project-specific rules via `semgrep-extra-config` (e.g. `p/typescript .semgrep.yml`).
+Semgrep base config is always `p/security-audit p/javascript p/react p/nodejs`. Add project-specific rules via `semgrep-extra-config` (e.g. `p/typescript .semgrep.yml`). Semgrep itself is CLI-installed via `pip install -r .github/workflows/requirements-semgrep.txt` (pinned version, Renovate-tracked as a pip requirements file) rather than the archived `semgrep/semgrep-action`. The run step also compares "rules loaded" vs "rules run" from semgrep's own output and reports a coverage-loss warning in the PR comment if more than ~20% of loaded rules failed to parse — this guards against a rule silently being dropped (e.g. a `PatternParseError`) while the job still reports success.
 
 ### reusable-docker-validation.yml
 
@@ -90,7 +90,7 @@ The SBOM is skipped in compose mode when `trivy-compose-image` is empty (same co
 
 ### reusable-dependency-review.yml
 
-Thin wrapper around `actions/dependency-review-action@v4`. Notable inputs:
+Thin wrapper around `actions/dependency-review-action@v5`. Notable inputs:
 - `allow-dependencies-licenses` — for MPL-2.0 transitive deps like lightningcss (see Kanban example)
 - `warn-only` — set true to report without blocking
 
@@ -129,14 +129,19 @@ The concurrency groups in the examples use different group names than the inline
 ## Action Versions
 
 All reusable workflows use:
-- `actions/checkout@v6`
-- `actions/setup-node@v6`
-- `actions/upload-artifact@v6`
-- `actions/dependency-review-action@v4`
-- `docker/setup-buildx-action@v3`
-- `gitleaks/gitleaks-action@v2`
-- `semgrep/semgrep-action@v1`
+- `actions/checkout@v7`
+- `actions/setup-node@v7`
+- `actions/upload-artifact@v7`
+- `actions/dependency-review-action@v5`
+- `docker/setup-buildx-action@v4`
+- `gitleaks/gitleaks-action@v3.0.0`
+- `aquasecurity/trivy-action@v0.36.0`
 - `github/codeql-action/upload-sarif@v4`
 - `peter-evans/find-comment@v4`
 - `peter-evans/create-or-update-comment@v5`
-- `actions/github-script@v8`
+- `actions/github-script@v9`
+- `actions/labeler@v7`
+
+Semgrep is installed via `pip install -r .github/workflows/requirements-semgrep.txt` (see reusable-security-performance.yml above), not a GitHub Action — `semgrep/semgrep-action` was archived by Semgrep in 2024 and pinned an outdated Docker image.
+
+Kept current by [Renovate](https://docs.renovatebot.com/) (`renovate.json`) once its onboarding PR is merged — see PR #2 on this repo.

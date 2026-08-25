@@ -49,7 +49,7 @@ jobs:
     steps:
       - name: 🔍 Find associated PR and check eligibility
         id: find-pr
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const branch = '${{ inputs.triggering-branch }}';
@@ -96,7 +96,7 @@ jobs:
       - name: ✅ Verify all required checks passed
         id: check-status
         if: steps.find-pr.outputs.pr_number != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const prNumber = parseInt('${{ steps.find-pr.outputs.pr_number }}');
@@ -221,7 +221,7 @@ jobs:
       - name: 🔀 Merge PR
         id: merge
         if: steps.check-status.outputs.ready == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const prNumber = parseInt('${{ steps.check-status.outputs.pr_number }}');

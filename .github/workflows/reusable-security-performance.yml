@@ -127,6 +127,16 @@ jobs:
           fi
           semgrep scan $CONFIGS --sarif --output semgrep.sarif . 2>&1 | tee semgrep-run.log
 
+          # semgrep's own findings count/exit code already excludes results
+          # suppressed via an inline `// nosemgrep: <rule-id>` comment, but the
+          # SARIF file still includes them (correctly, per the SARIF spec) with
+          # a `suppressions` entry — and GitHub's code-scanning ingestion does
+          # NOT honor that field, so an uploaded-as-is SARIF turns every
+          # deliberately-suppressed finding into a permanently open Security
+          # tab alert. Strip suppressed results before they reach either the
+          # upload step or our own findings-count check below.
+          jq '.runs[].results |= map(select((.suppressions // []) | length == 0))' semgrep.sarif > semgrep-filtered.sarif && mv semgrep-filtered.sarif semgrep.sarif
+
           # Guard against a rule silently failing to parse: semgrep-core validates
           # every rule at compile time, drops whatever doesn't parse, and keeps going
           # with exit 0 — a broken custom rule (or a bad registry rule) can sit dead

@@ -74,7 +74,7 @@ Bundle analysis has two modes selected by whether baseline inputs are provided:
 
 `bundle-client-dir` sets the working directory for the build and the `dist/assets/` path.
 
-Semgrep base config is always `p/security-audit p/javascript p/react p/nodejs`. Add project-specific rules via `semgrep-extra-config` (e.g. `p/typescript .semgrep.yml`). Semgrep itself is CLI-installed via `pip install -r .github/workflows/requirements-semgrep.txt` (pinned version, Renovate-tracked as a pip requirements file) rather than the archived `semgrep/semgrep-action`. The run step also compares "rules loaded" vs "rules run" from semgrep's own output and reports a coverage-loss warning in the PR comment if more than ~20% of loaded rules failed to parse — this guards against a rule silently being dropped (e.g. a `PatternParseError`) while the job still reports success.
+Semgrep base config is always `p/security-audit p/javascript p/react p/nodejs`. Add project-specific rules via `semgrep-extra-config` (e.g. `p/typescript .semgrep.yml`). Semgrep itself is CLI-installed via `pip install "semgrep==$SEMGREP_VERSION"` with the version pinned inline in the run step (marked with a `# renovate: datasource=pypi depName=semgrep` comment) rather than the archived `semgrep/semgrep-action` — a requirements file living in this repo would not be reachable, since the security-scan job's checkout pulls the *calling* repo, not this one. The run step also compares "rules loaded" vs "rules run" from semgrep's own output and reports a coverage-loss warning in the PR comment if more than ~20% of loaded rules failed to parse — this guards against a rule silently being dropped (e.g. a `PatternParseError`) while the job still reports success.
 
 ### reusable-docker-validation.yml
 
@@ -142,6 +142,6 @@ All reusable workflows use:
 - `actions/github-script@v9`
 - `actions/labeler@v7`
 
-Semgrep is installed via `pip install -r .github/workflows/requirements-semgrep.txt` (see reusable-security-performance.yml above), not a GitHub Action — `semgrep/semgrep-action` was archived by Semgrep in 2024 and pinned an outdated Docker image.
+Semgrep is installed via `pip install semgrep==$SEMGREP_VERSION` (version pinned inline, see reusable-security-performance.yml above), not a GitHub Action — `semgrep/semgrep-action` was archived by Semgrep in 2024 and pinned an outdated Docker image.
 
 Kept current by [Renovate](https://docs.renovatebot.com/) (`renovate.json`) once its onboarding PR is merged — see PR #2 on this repo.

@@ -110,10 +110,13 @@ jobs:
         id: semgrep
         continue-on-error: true
         run: |
-          # Pinned via .github/workflows/requirements-semgrep.txt (Renovate-tracked pip
-          # requirements file) so the ruleset/CLI pairing is reproducible instead of
-          # drifting to whatever `pip install semgrep` resolves to on a given day.
-          pip install -r "${{ github.workspace }}/.github/workflows/requirements-semgrep.txt" --quiet
+          # Pinned so the ruleset/CLI pairing is reproducible instead of drifting to
+          # whatever `pip install semgrep` resolves to on a given day. Version lives
+          # inline (not in a requirements file in this repo) because this step runs in
+          # the *calling* repo's checkout — a file here wouldn't exist on the runner.
+          # renovate: datasource=pypi depName=semgrep
+          SEMGREP_VERSION="1.174.0"
+          pip install "semgrep==${SEMGREP_VERSION}" --quiet
           CONFIGS="--config p/security-audit --config p/javascript --config p/react --config p/nodejs"
           EXTRA="${{ inputs.semgrep-extra-config }}"
           if [ -n "$EXTRA" ]; then

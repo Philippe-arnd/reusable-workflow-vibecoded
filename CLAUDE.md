@@ -83,7 +83,7 @@ Single job with two mode branches via `use-compose: boolean`:
 - **Compose mode** (`use-compose: true`): runs `docker compose build` + `docker compose up -d`, health-checks by exec-ing into `compose-health-service`
 
 When `run-trivy-scan: true`, two Trivy passes run after the build:
-1. SARIF scan → uploaded to GitHub Security tab
+1. SARIF scan → uploaded to GitHub Security tab with a fixed `category: trivy` (same for Semgrep's upload in `reusable-security-performance.yml`, `category: semgrep`). Without a pinned category, `upload-sarif` derives one from the *calling* workflow's file+job — since consumer repos call this from more than one caller (their normal `docker-validation.yml`/`security-performance.yml` on PRs, plus a `weekly-pipeline.yml` for the comprehensive scheduled run), that produced two different categories for the same tool, so GitHub couldn't diff a PR's alerts against the `main` baseline uploaded by the other caller (shows as a neutral "1 configuration not found" check, harmless but confusing).
 2. SBOM generation → `sbom.spdx.json` uploaded as a workflow artifact (retained 90 days)
 
 The SBOM is skipped in compose mode when `trivy-compose-image` is empty (same condition as the SARIF scan).

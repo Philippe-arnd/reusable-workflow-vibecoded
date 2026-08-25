@@ -100,6 +100,7 @@ jobs:
       contents: read
       security-events: write
     outputs:
+      icon: ${{ steps.result.outputs.icon }}
       status: ${{ steps.result.outputs.status }}
       message: ${{ steps.result.outputs.message }}
     steps:
@@ -160,19 +161,24 @@ jobs:
             ERRORS=$(jq '[.runs[].results[] | select(.level == "error")] | length' semgrep.sarif 2>/dev/null || echo "0")
             WARNINGS=$(jq '[.runs[].results[] | select(.level == "warning")] | length' semgrep.sarif 2>/dev/null || echo "0")
             if [ "$ERRORS" -gt 0 ]; then
+              echo "icon=❌"                              >> $GITHUB_OUTPUT
               echo "status=❌ Fail"                      >> $GITHUB_OUTPUT
               echo "message=${ERRORS} critical issue(s)" >> $GITHUB_OUTPUT
             else
+              echo "icon=⚠️"                          >> $GITHUB_OUTPUT
               echo "status=⚠️ Warning"               >> $GITHUB_OUTPUT
               echo "message=${WARNINGS} warning(s)"  >> $GITHUB_OUTPUT
             fi
           elif [ "${{ steps.semgrep.outcome }}" = "success" ] && [ "${{ steps.semgrep.outputs.coverage_dropped }}" = "true" ]; then
+            echo "icon=⚠️" >> $GITHUB_OUTPUT
             echo "status=⚠️ Warning" >> $GITHUB_OUTPUT
             echo "message=Only ${{ steps.semgrep.outputs.ran_rules }}/${{ steps.semgrep.outputs.loaded_rules }} rules ran (parse errors — check job log)" >> $GITHUB_OUTPUT
           elif [ "${{ steps.semgrep.outcome }}" = "success" ]; then
+            echo "icon=✅"                   >> $GITHUB_OUTPUT
             echo "status=✅ Pass"           >> $GITHUB_OUTPUT
             echo "message=No issues found" >> $GITHUB_OUTPUT
           else
+            echo "icon=❌"               >> $GITHUB_OUTPUT
             echo "status=❌ Fail"       >> $GITHUB_OUTPUT
             echo "message=Scan failed" >> $GITHUB_OUTPUT
           fi
@@ -329,7 +335,7 @@ jobs:
             | Check | Status | Details |
             |:------|:------:|:--------|
             | 🔑 Secret Detection | ${{ needs.secret-detection.result == 'success' && '✅' || needs.secret-detection.result == 'failure' && '❌' || '⏭️' }} | ${{ needs.secret-detection.result == 'success' && 'No secrets found' || needs.secret-detection.result == 'failure' && '**Secrets detected — review immediately**' || 'Skipped' }} |
-            | 🛡️ SAST (Semgrep) | ${{ needs.security-scan.result == 'success' && '✅' || needs.security-scan.result == 'failure' && '❌' || '⏭️' }} | ${{ needs.security-scan.outputs.message || (needs.security-scan.result == 'failure' && 'Scan failed' || 'Skipped') }} |
+            | 🛡️ SAST (Semgrep) | ${{ needs.security-scan.outputs.icon || (needs.security-scan.result == 'failure' && '❌' || '⏭️') }} | ${{ needs.security-scan.outputs.message || (needs.security-scan.result == 'failure' && 'Scan failed' || 'Skipped') }} |
             | 📦 Bundle Size | ${{ needs.bundle-analysis.result == 'success' && '✅' || needs.bundle-analysis.result == 'failure' && '❌' || '⏭️' }} | ${{ needs.bundle-analysis.outputs.status || 'Skipped' }} — ${{ needs.bundle-analysis.outputs.message || '' }} |
 
             ${{ needs.bundle-analysis.result == 'success' && '<details>' || '' }}

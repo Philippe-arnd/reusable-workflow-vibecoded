@@ -154,7 +154,7 @@ jobs:
       coverage_available: ${{ steps.coverage.outputs.available }}
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ${{ inputs.postgres-admin-password }}
@@ -269,7 +269,7 @@ jobs:
       exit_code: ${{ steps.rls.outputs.exit_code }}
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ${{ inputs.postgres-admin-password }}

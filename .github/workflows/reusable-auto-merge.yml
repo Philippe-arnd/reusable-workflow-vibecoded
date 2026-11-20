@@ -51,10 +51,15 @@ jobs:
     name: 🤖 Auto Merge
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    # Only run when the triggering workflow succeeded.
+    # Run on both success and failure of the triggering workflow — not just success.
+    # A caller with a single CI workflow (no other workflow_run to pick up the slack)
+    # would otherwise never evaluate check-status at all when that workflow fails,
+    # so file-issue-on-failure would be a silent no-op. check-status re-derives the
+    # real state from the checks API regardless, so running on 'failure' is safe —
+    # it can only skip the merge or file an issue, never merge on a false green.
     # inputs.triggering-conclusion is forwarded by the caller because workflow_call
     # does not propagate the parent workflow_run event payload.
-    if: ${{ inputs.triggering-conclusion == 'success' }}
+    if: ${{ inputs.triggering-conclusion == 'success' || inputs.triggering-conclusion == 'failure' }}
     steps:
       - name: 🔍 Find associated PR and check eligibility
         id: find-pr

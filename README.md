@@ -127,6 +127,8 @@ Supports both single Dockerfile and Docker Compose. Triggers on release tag push
 
 > **Tag pattern is configurable** — `release-*` is the recommended convention. Use `v*` if your project follows semver tags.
 
+**🛢️ DB Upgrade Check** (job `db-upgrade-check`, PRs only): CI databases start empty, so a database major that cannot read an existing data directory (e.g. postgres 16 → 19) passes every other test and only breaks in production. This job reproduces the production situation: it starts each changed database service (postgres, mysql, mariadb, mongo, redis, valkey) with the base branch image, stops it, starts it again with the PR image on the same volume, and fails if it is not running and healthy without restarts. It takes about a minute, builds nothing, and is skipped when no database image changed. List `<caller job> / 🛢️ DB Upgrade Check` in the auto-merge `conditional-checks`.
+
 When `run-trivy-scan: true`, two Trivy passes run after the build:
 1. **SARIF scan** → results uploaded to the GitHub Security tab
 2. **SBOM** → `sbom.spdx.json` (SPDX format) uploaded as a workflow artifact, retained 90 days
@@ -142,6 +144,8 @@ When `run-trivy-scan: true`, two Trivy passes run after the build:
 | `trivy-severity` | `CRITICAL,HIGH` | Severity levels to report |
 | `trivy-fail-on-finding` | `false` | Fail the job on CVE findings (warn-only by default) |
 | `trivy-compose-image` | — | Image name to scan in compose mode — empty = skip Trivy + SBOM |
+| `db-upgrade-check` | `true` | On PRs, if a database image changes in the compose file, start it with the base branch image, restart it with the PR image on the same volume, and fail if it does not come back healthy |
+| `compose-file` | `docker-compose.yml` | Compose file read by the DB upgrade check (works in both single and compose mode) |
 
 ```yaml
 on:

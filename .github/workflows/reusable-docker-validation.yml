@@ -112,6 +112,20 @@ on:
         type: string
         default: ''
 
+      # Database upgrade check
+      db-upgrade-check:
+        description: >-
+          On pull requests, if a database service image changes in the compose file
+          (postgres, mysql, mariadb, mongo, redis, valkey), start it with the base
+          branch image, then restart it with the PR image on the same volume, and fail
+          if it does not come back healthy. Catches majors that cannot read existing data.
+        type: boolean
+        default: true
+      compose-file:
+        description: 'Compose file used by the database upgrade check'
+        type: string
+        default: 'docker-compose.yml'
+
 jobs:
   docker-build-validate:
     name: 🐳 Build & Validate Docker Image
@@ -343,3 +357,87 @@ jobs:
       - name: 🧹 Cleanup (compose mode)
         if: ${{ inputs.use-compose && always() }}
         run: docker compose down -v --remove-orphans
+
+  db-upgrade-check:
+    name: 🛢️ DB Upgrade Check
+    if: ${{ inputs.db-upgrade-check && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      COMPOSE_FILE_NAME: ${{ inputs.compose-file }}
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 🔎 Find changed database images
+        id: detect
+        run: |
+          git worktree add /tmp/base "origin/${BASE_REF}"
+          if [ ! -f "/tmp/base/${COMPOSE_FILE_NAME}" ] || [ ! -f "${COMPOSE_FILE_NAME}" ]; then
+            echo "No compose file on both sides: nothing to check"; echo "services=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          for side in base pr; do
+            dir=$([ "$side" = base ] && echo /tmp/base || echo "$PWD")
+            docker compose --project-directory "$dir" -f "$dir/${COMPOSE_FILE_NAME}" config --format json > "/tmp/$side.json" 2>/tmp/$side.err \
+              || { cat /tmp/$side.err; exit 1; }
+          done
+          services=$(python3 - <<'EOF'
+          import json, re
+          db = re.compile(r'(^|/)(postgres|postgis/postgis|mysql|mariadb|mongo|redis|valkey/valkey|valkey)(:|@|$)')
+          base = json.load(open('/tmp/base.json'))['services']
+          pr = json.load(open('/tmp/pr.json'))['services']
+          out = []
+          for name, svc in pr.items():
+              new, old = svc.get('image', ''), base.get(name, {}).get('image', '')
+              if old and new and old != new and (db.search(new) or db.search(old)):
+                  print(f'{name}: {old} -> {new}', file=__import__('sys').stderr)
+                  out.append(name)
+          print(' '.join(out))
+          EOF
+          )
+          echo "services=${services}" >> "$GITHUB_OUTPUT"
+          [ -z "$services" ] && echo "No database image change: nothing to check"
+          true
+
+      - name: 🛢️ Start with base image, then restart with PR image on the same volume
+        if: ${{ steps.detect.outputs.services != '' }}
+        env:
+          SERVICES: ${{ steps.detect.outputs.services }}
+        run: |
+          set -u
+          up() { docker compose --project-directory "$1" -f "$1/${COMPOSE_FILE_NAME}" -p dbupgrade up -d --no-deps --wait --wait-timeout 120 "$2"; }
+          check() {
+            local id; id=$(docker compose --project-directory "$PWD" -f "${COMPOSE_FILE_NAME}" -p dbupgrade ps -q "$1")
+            sleep 15
+            local state restarts health
+            state=$(docker inspect -f '{{.State.Status}}' "$id"); restarts=$(docker inspect -f '{{.RestartCount}}' "$id")
+            health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id")
+            echo "$1: state=$state restarts=$restarts health=$health"
+            [ "$state" = running ] && [ "$restarts" = 0 ] && { [ "$health" = healthy ] || [ "$health" = none ]; }
+          }
+          fail=0
+          for svc in $SERVICES; do
+            echo "::group::$svc with the base image"
+            up /tmp/base "$svc" || { echo "::error::$svc does not start with the base image"; exit 1; }
+            docker compose --project-directory /tmp/base -f "/tmp/base/${COMPOSE_FILE_NAME}" -p dbupgrade stop "$svc"
+            echo "::endgroup::"
+            echo "::group::$svc with the PR image, on the data written by the base image"
+            if up "$PWD" "$svc" && check "$svc"; then
+              echo "✅ $svc starts on existing data"
+            else
+              echo "::error::$svc does not start on data from the base image: a major upgrade needs a manual migration (pg_upgrade, dump/restore) of the prod volume"
+              docker compose --project-directory "$PWD" -f "${COMPOSE_FILE_NAME}" -p dbupgrade logs --tail=50 "$svc"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: 🧹 Cleanup
+        if: ${{ always() }}
+        run: docker compose --project-directory "$PWD" -f "${COMPOSE_FILE_NAME}" -p dbupgrade down -v --remove-orphans 2>/dev/null || true
